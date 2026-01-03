@@ -39,6 +39,12 @@ def read_format_tags(ffprobe_path: str, input_path: Path) -> Dict[str, str]:
     return normalized
 
 
+def has_artwork_tag(ffprobe_path: str, input_path: Path) -> bool:
+    """Return True if format tags indicate embedded artwork."""
+    tags = read_format_tags(ffprobe_path, input_path)
+    return "covr" in tags or "artwork" in tags
+
+
 def has_attached_picture(ffprobe_path: str, input_path: Path) -> bool:
     """Return True if the media file has an attached picture stream."""
     cmd = [
@@ -126,6 +132,12 @@ class MediaInspector:
             if disposition.get("attached_pic") == 1:
                 return True
         return False
+
+    def has_artwork_tag(self, input_path: Path) -> bool:
+        if input_path not in self._format_tags_cache:
+            self._format_tags_cache[input_path] = read_format_tags(self._ffprobe_path, input_path)
+        tags = self._format_tags_cache[input_path]
+        return "covr" in tags or "artwork" in tags
 
     def has_drm_stream(self, input_path: Path) -> bool:
         streams = self._load_streams(input_path)

@@ -1,1 +1,1 @@
-"""TMDb client and image helpers."""
+"""TMDb client and helper modules."""

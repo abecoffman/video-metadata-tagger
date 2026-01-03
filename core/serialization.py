@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from core.movie_metadata import MovieMetadata
+from core.tv_metadata import TvMetadata
 
 
-def build_template_context(movie: Dict[str, Any], max_overview_len: int) -> Dict[str, str]:
+def build_template_context(movie: Dict[str, Any], max_overview_len: int, media_type: str = "movie") -> Dict[str, str]:
     """Build a template context from raw TMDb data.
 
     Args:
@@ -17,6 +18,8 @@ def build_template_context(movie: Dict[str, Any], max_overview_len: int) -> Dict
     Returns:
         Template context mapping for metadata serialization.
     """
+    if media_type == "tv":
+        return TvMetadata.from_tmdb(movie, max_overview_len).to_context()
     return MovieMetadata.from_tmdb(movie, max_overview_len).to_context()
 
 

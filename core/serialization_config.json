@@ -23,7 +23,8 @@
     "homepage": "{homepage}",
     "spoken_languages": "{spoken_languages_joined}",
     "production_countries": "{production_countries_joined}",
-    "collection": "{collection_name}"
+    "collection": "{collection_name}",
+    "extras": "{extras}"
   },
   "max_overview_length": 500
 }

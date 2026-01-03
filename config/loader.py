@@ -24,6 +24,7 @@ MODULE_CONFIG_PATHS = {
     "matching": BASE_DIR / "core" / "matching_config.json",
     "write": BASE_DIR / "ffmpeg" / "config.json",
     "serialization": BASE_DIR / "core" / "serialization_config.json",
+    "serialization_tv": BASE_DIR / "core" / "serialization_tv_config.json",
 }
 
 
@@ -75,7 +76,7 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
     matching_raw = raw.get("matching", {}) or {}
     write_raw = raw.get("write", {}) or {}
     serialization_raw = raw.get("serialization", {}) or {}
-    tags_raw = raw.get("tags", {}) or {}
+    serialization_tv_raw = raw.get("serialization_tv", {}) or {}
 
     tmdb = TmdbConfig(
         api_key_env=str(tmdb_raw.get("api_key_env", "TMDB_API_KEY")),
@@ -83,7 +84,10 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
         language=str(tmdb_raw.get("language", "en-US")),
         include_adult=_as_bool(tmdb_raw.get("include_adult"), False),
         min_score=_as_float(tmdb_raw.get("min_score", 2.0), 2.0),
+        fallback_min_score=_as_float(tmdb_raw.get("fallback_min_score", 1.5), 1.5),
+        fallback_min_votes=_as_int(tmdb_raw.get("fallback_min_votes", 10), 10),
         request_delay_seconds=_as_float(tmdb_raw.get("request_delay_seconds", 0.25), 0.25),
+        allow_tv_fallback=_as_bool(tmdb_raw.get("allow_tv_fallback"), True),
     )
     scan = ScanConfig(
         extensions=_as_list(scan_raw.get("extensions")),
@@ -109,20 +113,25 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
         backup_original=_as_bool(write_raw.get("backup_original"), True),
         backup_dir=str(write_raw.get("backup_dir", "runs")),
         backup_suffix=str(write_raw.get("backup_suffix", ".bak")),
-        cover_art_enabled=_as_bool(write_raw.get("cover_art_enabled"), False),
+        cover_art_enabled=_as_bool(write_raw.get("cover_art_enabled"), True),
         cover_art_size=str(write_raw.get("cover_art_size", "w500")),
         ffmpeg_path=str(write_raw.get("ffmpeg_path", "ffmpeg")),
+        atomicparsley_path=str(write_raw.get("atomicparsley_path", "AtomicParsley")),
+        metadata_tool=str(write_raw.get("metadata_tool", "atomicparsley")),
+        rdns_namespace=str(write_raw.get("rdns_namespace", "local.tmdb")),
         ffmpeg_analyzeduration=write_raw.get("ffmpeg_analyzeduration"),
         ffmpeg_probe_size=write_raw.get("ffmpeg_probe_size"),
         atomic_replace=_as_bool(write_raw.get("atomic_replace"), True),
         test_mode=test_mode,
     )
 
-    merged_serialization = dict(tags_raw)
-    merged_serialization.update(serialization_raw)
     serialization = SerializationConfig(
-        mappings={str(k): str(v) for k, v in (merged_serialization.get("mappings") or {}).items()},
-        max_overview_length=_as_int(merged_serialization.get("max_overview_length", 500), 500),
+        mappings={str(k): str(v) for k, v in (serialization_raw.get("mappings") or {}).items()},
+        max_overview_length=_as_int(serialization_raw.get("max_overview_length", 500), 500),
+    )
+    serialization_tv = SerializationConfig(
+        mappings={str(k): str(v) for k, v in (serialization_tv_raw.get("mappings") or {}).items()},
+        max_overview_length=_as_int(serialization_tv_raw.get("max_overview_length", 500), 500),
     )
     return Config(
         tmdb=tmdb,
@@ -130,6 +139,7 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
         matching=matching,
         write=write,
         serialization=serialization,
+        serialization_tv=serialization_tv,
     )
 
 
