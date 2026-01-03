@@ -1,0 +1,30 @@
+{
+  "strip_tokens": [
+    "1080p",
+    "720p",
+    "2160p",
+    "4k",
+    "bluray",
+    "bdrip",
+    "webrip",
+    "web-dl",
+    "hdrip",
+    "x264",
+    "x265",
+    "h264",
+    "h265",
+    "hevc",
+    "10bit",
+    "dv",
+    "dolby",
+    "vision",
+    "hdr",
+    "aac",
+    "dts",
+    "truehd",
+    "atmos",
+    "yify",
+    "rarbg"
+  ],
+  "prefer_year_from_filename": true
+}

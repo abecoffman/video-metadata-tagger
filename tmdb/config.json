@@ -1,0 +1,7 @@
+{
+  "api_key_env": "TMDB_API_KEY",
+  "language": "en-US",
+  "include_adult": false,
+  "min_score": 2.0,
+  "request_delay_seconds": 0.25
+}

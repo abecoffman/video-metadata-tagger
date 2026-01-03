@@ -1,0 +1,19 @@
+{
+  "extensions": [
+    ".mp4",
+    ".m4v",
+    ".mov",
+    ".mkv",
+    ".avi",
+    ".mpg",
+    ".mpeg",
+    ".wmv",
+    ".flv",
+    ".webm"
+  ],
+  "ignore_substrings": [
+    "sample",
+    "trailer"
+  ],
+  "max_files": 0
+}

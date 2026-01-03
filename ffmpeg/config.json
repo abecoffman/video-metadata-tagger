@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "dry_run": false,
+  "backup_original": true,
+  "backup_dir": "runs",
+  "backup_suffix": ".bak",
+  "cover_art_enabled": false,
+  "cover_art_size": "w500",
+  "ffmpeg_path": "ffmpeg",
+  "ffmpeg_analyzeduration": null,
+  "ffmpeg_probe_size": null,
+  "atomic_replace": true
+}
