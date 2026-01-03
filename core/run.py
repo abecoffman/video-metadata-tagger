@@ -3,29 +3,24 @@
 from __future__ import annotations
 
 import json
-import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
-import requests
-
-from ffmpeg.backups import (
-    backup_metadata_path,
-    backup_original_path,
-    create_run_backup_dir,
-    ffmpeg_backup_metadata,
-    ffmpeg_restore_metadata,
-)
+from ffmpeg.backups import backup_metadata_path, backup_original_path, ffmpeg_backup_metadata, ffmpeg_restore_metadata
 from cli import RunOptions
 from config import Config
 from core.matching import clean_filename_for_search
 from core.movie_metadata import MovieMetadata
-from file_io.scanner import find_movie_files, normalize_extensions
 from core.serialization import render_tag_value
+from core.services.file_selection import select_files
+from core.services.run_artifacts import append_run_log, setup_run_dirs, write_manifest_record
+from core.services.tmdb_resolver import init_tmdb
+from core.services.write_pipeline import filter_existing_tags, has_sufficient_backup_space
+from file_io.scanner import normalize_extensions
 from tmdb.tmdb_client import tmdb_movie_details, tmdb_search_best_match
-from tmdb.tmdb_images import build_image_url, download_cover_art, select_image_size, tmdb_configuration
+from tmdb.tmdb_images import build_image_url, download_cover_art, select_image_size
+from ffmpeg.inspect import MediaInspector, resolve_ffprobe_path
 from ffmpeg.writer import ffmpeg_write_metadata
 
 
@@ -44,243 +39,6 @@ def resolve_test_mode(options: RunOptions, cfg: Config) -> str | None:
     return cfg.write.test_mode
 
 
-@dataclass
-class RunDirs:
-    """Paths for run artifacts."""
-
-    run_backup_dir: Path | None
-    run_manifest_path: Path | None
-    run_log_path: Path | None
-
-
-@dataclass
-class TmdbContext:
-    """TMDb session and configuration context."""
-
-    session: requests.Session | None
-    api_key: str
-    language: str
-    include_adult: bool
-    min_score: float
-    delay: float
-    image_base_url: str
-    poster_sizes: list[str]
-    cover_art_enabled: bool
-
-
-def _manifest_path_for_rerun(rerun_failed: Path) -> Path:
-    """Resolve the manifest path for a rerun option.
-
-    Args:
-        rerun_failed: Path to a run directory or manifest file.
-
-    Returns:
-        Path to the JSONL manifest.
-    """
-    if rerun_failed.is_dir():
-        return rerun_failed / "run.jsonl"
-    return rerun_failed
-
-
-def _load_failed_from_manifest(path: Path) -> list[Path]:
-    """Load failed file paths from a run manifest.
-
-    Args:
-        path: Path to the JSONL manifest.
-
-    Returns:
-        List of failed file paths.
-    """
-    if not path.exists():
-        print(f"Run manifest not found: {path}")
-        return []
-    failed: list[Path] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if record.get("status") != "failed":
-            continue
-        value = record.get("path")
-        if not value:
-            continue
-        failed.append(Path(value))
-    return failed
-
-
-def _write_manifest_record(path: Path, record: Dict[str, object]) -> None:
-    """Append a record to the run manifest.
-
-    Args:
-        path: Manifest path.
-        record: Record payload.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
-
-
-def _append_run_log(log_path: Path | None, message: str) -> None:
-    """Append a line to the run log.
-
-    Args:
-        log_path: Log path, or None to disable logging.
-        message: Message to append.
-    """
-    if not log_path:
-        return
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(message)
-
-
-def _select_files(
-    options: RunOptions,
-    exts: list[str],
-    ignore_substrings: list[str],
-    max_files: int,
-) -> list[Path] | None:
-    """Select files based on CLI options and scan rules.
-
-    Args:
-        options: Parsed run options.
-        exts: Normalized extensions.
-        ignore_substrings: Substrings to ignore.
-        max_files: Max files to return.
-
-    Returns:
-        List of files, empty list, or None on configuration error.
-    """
-    if options.rerun_failed:
-        manifest_path = _manifest_path_for_rerun(options.rerun_failed)
-        files = _load_failed_from_manifest(manifest_path)
-        if not files:
-            print("No failed files found in manifest.")
-            return []
-    elif options.file:
-        files = [options.file]
-    else:
-        if not options.root:
-            print("No root directory configured.")
-            return None
-        files = find_movie_files(options.root, exts, ignore_substrings, max_files)
-
-    if options.only_exts:
-        files = [path for path in files if path.suffix.lower() in options.only_exts]
-    return files
-
-
-def _setup_run_dirs(options: RunOptions, backup_dir: Path, test_mode: bool) -> RunDirs | None:
-    """Initialize run directories for logs and manifests.
-
-    Args:
-        options: Parsed run options.
-        backup_dir: Base directory for run artifacts.
-        test_mode: Whether test mode is active.
-
-    Returns:
-        RunDirs or None if configuration is invalid.
-    """
-    if options.restore_backup:
-        if not options.restore_backup.exists() or not options.restore_backup.is_dir():
-            print(f"Backup directory not found: {options.restore_backup}")
-            return None
-        return RunDirs(None, None, None)
-
-    if test_mode:
-        return RunDirs(None, None, None)
-
-    run_backup_dir = create_run_backup_dir(backup_dir)
-    return RunDirs(run_backup_dir, run_backup_dir / "run.jsonl", run_backup_dir / "run.log")
-
-
-def _init_tmdb(
-    cfg: Config,
-    cover_art_enabled: bool,
-    write_enabled: bool,
-    test_mode_setting: str | None,
-    restore_backup: bool,
-) -> tuple[TmdbContext, str | None]:
-    """Initialize TMDb session and image configuration.
-
-    Args:
-        cfg: Loaded config.
-        cover_art_enabled: Whether cover art is enabled.
-        write_enabled: Whether write mode is enabled.
-        test_mode_setting: Current test mode.
-        restore_backup: Whether restore mode is active.
-
-    Returns:
-        Tuple of (TmdbContext, error_message).
-    """
-    if restore_backup:
-        return (
-            TmdbContext(
-                session=None,
-                api_key="",
-                language="",
-                include_adult=False,
-                min_score=0.0,
-                delay=0.0,
-                image_base_url="",
-                poster_sizes=[],
-                cover_art_enabled=cover_art_enabled,
-            ),
-            None,
-        )
-
-    api_key_env = cfg.tmdb.api_key_env
-    api_key = cfg.tmdb.api_key or os.environ.get(api_key_env, "")
-    if not api_key:
-        return (
-            TmdbContext(
-                session=None,
-                api_key="",
-                language="",
-                include_adult=False,
-                min_score=0.0,
-                delay=0.0,
-                image_base_url="",
-                poster_sizes=[],
-                cover_art_enabled=cover_art_enabled,
-            ),
-            f"TMDb API key missing. Set env var {api_key_env} or add tmdb.api_key to config.",
-        )
-
-    language = cfg.tmdb.language
-    include_adult = bool(cfg.tmdb.include_adult)
-    min_score = float(cfg.tmdb.min_score)
-    delay = float(cfg.tmdb.request_delay_seconds)
-    session = requests.Session()
-    image_base_url = ""
-    poster_sizes: list[str] = []
-
-    if cover_art_enabled and (write_enabled or test_mode_setting == "verbose"):
-        config_data = tmdb_configuration(session, api_key)
-        images = config_data.get("images", {}) if isinstance(config_data, dict) else {}
-        image_base_url = str(images.get("secure_base_url") or images.get("base_url") or "")
-        poster_sizes = list(images.get("poster_sizes") or [])
-        if not image_base_url or not poster_sizes:
-            print("Cover art disabled: TMDb image configuration missing.")
-            cover_art_enabled = False
-
-    return (
-        TmdbContext(
-            session=session,
-            api_key=api_key,
-            language=language,
-            include_adult=include_adult,
-            min_score=min_score,
-            delay=delay,
-            image_base_url=image_base_url,
-            poster_sizes=poster_sizes,
-            cover_art_enabled=cover_art_enabled,
-        ),
-        None,
-    )
 
 
 def run(options: RunOptions, cfg: Config) -> int:
@@ -312,9 +70,12 @@ def run(options: RunOptions, cfg: Config) -> int:
     ffmpeg_analyzeduration = write_cfg.ffmpeg_analyzeduration
     ffmpeg_probe_size = write_cfg.ffmpeg_probe_size
     atomic_replace = bool(write_cfg.atomic_replace)
+    override_existing = bool(write_cfg.override_existing)
     test_mode_setting = resolve_test_mode(options, cfg)
     test_mode = bool(test_mode_setting)
     full_log = test_mode_setting != "basic"
+    ffprobe_path = resolve_ffprobe_path(ffmpeg_path)
+    inspector = MediaInspector(ffprobe_path)
 
     if test_mode:
         print(f"TEST MODE enabled ({test_mode_setting}): no files will be modified.\n")
@@ -329,7 +90,15 @@ def run(options: RunOptions, cfg: Config) -> int:
     if not test_mode:
         backup_dir.mkdir(parents=True, exist_ok=True)
 
-    files = _select_files(options, exts, ignore_substrings, max_files)
+    files = select_files(
+        options.rerun_failed,
+        options.file,
+        options.root,
+        exts,
+        ignore_substrings,
+        max_files,
+        options.only_exts,
+    )
     if files is None:
         return 2
     if not files:
@@ -340,11 +109,11 @@ def run(options: RunOptions, cfg: Config) -> int:
     if not write_enabled:
         print("NOTE: write.enabled is false; will only fetch & print metadata.\n")
 
-    run_dirs = _setup_run_dirs(options, backup_dir, test_mode)
+    run_dirs = setup_run_dirs(options.restore_backup, backup_dir, test_mode)
     if run_dirs is None:
         return 2
 
-    tmdb_ctx, tmdb_error = _init_tmdb(
+    tmdb_ctx, tmdb_error = init_tmdb(
         cfg,
         cover_art_enabled,
         write_enabled,
@@ -374,7 +143,7 @@ def run(options: RunOptions, cfg: Config) -> int:
             print("  ❌ File missing (skipping).")
             fail_count += 1
             if run_manifest_path:
-                _write_manifest_record(
+                write_manifest_record(
                     run_manifest_path,
                     {
                         "path": str(path),
@@ -418,9 +187,9 @@ def run(options: RunOptions, cfg: Config) -> int:
                     fail_count += 1
                     status = "failed"
                     reason = "restore_failed"
-                    _append_run_log(run_log_path, f"[restore] {path}\nerror: failed to restore\n")
+                    append_run_log(run_log_path, f"[restore] {path}\nerror: failed to restore\n")
                 if run_manifest_path:
-                    _write_manifest_record(
+                    write_manifest_record(
                         run_manifest_path,
                         {
                             "path": str(path),
@@ -433,6 +202,29 @@ def run(options: RunOptions, cfg: Config) -> int:
                         },
                     )
                 continue
+
+            if write_enabled and not test_mode:
+                try:
+                    if inspector.has_drm_stream(path):
+                        print("  DRM-protected media detected (skipping).")
+                        skip_count += 1
+                        append_run_log(run_log_path, f"[drm] {path}\n")
+                        if run_manifest_path:
+                            write_manifest_record(
+                                run_manifest_path,
+                                {
+                                    "path": str(path),
+                                    "status": "skipped",
+                                    "reason": "drm_protected",
+                                    "tmdb_id": None,
+                                    "title": None,
+                                    "mtime": stat.st_mtime if stat else None,
+                                    "size": stat.st_size if stat else None,
+                                },
+                            )
+                        continue
+                except Exception as exc:
+                    print(f"  ⚠️ Could not inspect DRM status: {exc}")
 
             best = tmdb_search_best_match(
                 session=tmdb_ctx.session,
@@ -449,7 +241,7 @@ def run(options: RunOptions, cfg: Config) -> int:
                 print("  TMDb: no confident match found (skipping).")
                 skip_count += 1
                 if run_manifest_path:
-                    _write_manifest_record(
+                    write_manifest_record(
                         run_manifest_path,
                         {
                             "path": str(path),
@@ -473,10 +265,6 @@ def run(options: RunOptions, cfg: Config) -> int:
                 print(f"  Movie: {metadata.title} ({metadata.release_year})")
             else:
                 print(f"  TMDb: matched '{metadata.title}' ({metadata.release_year}) id={metadata.tmdb_id}")
-            if full_log:
-                print("  TMDb metadata:")
-                print(json.dumps(details, indent=2, sort_keys=True))
-
             tags_to_write: Dict[str, str] = {}
             for ffkey, template in cfg.serialization.mappings.items():
                 val = render_tag_value(str(template), ctx)
@@ -487,7 +275,7 @@ def run(options: RunOptions, cfg: Config) -> int:
                 print("  No tags produced from config mappings (skipping write).")
                 skip_count += 1
                 if run_manifest_path:
-                    _write_manifest_record(
+                    write_manifest_record(
                         run_manifest_path,
                         {
                             "path": str(path),
@@ -501,11 +289,42 @@ def run(options: RunOptions, cfg: Config) -> int:
                     )
                 continue
 
+            if not override_existing:
+                existing_tags: Dict[str, str] = {}
+                try:
+                    existing_tags = inspector.read_format_tags(path)
+                except Exception as exc:
+                    print(f"  ⚠️ Could not read existing tags: {exc}")
+                if existing_tags:
+                    tags_to_write, skipped = filter_existing_tags(tags_to_write, existing_tags)
+                    if skipped:
+                        print(f"  Skipping existing tags: {', '.join(skipped)}")
+                    if not tags_to_write:
+                        print("  All configured tags already exist (skipping write).")
+                        skip_count += 1
+                        if run_manifest_path:
+                            write_manifest_record(
+                                run_manifest_path,
+                                {
+                                    "path": str(path),
+                                    "status": "skipped",
+                                    "reason": "existing_tags",
+                                    "tmdb_id": metadata.tmdb_id,
+                                    "title": metadata.title,
+                                    "mtime": stat.st_mtime if stat else None,
+                                    "size": stat.st_size if stat else None,
+                                },
+                            )
+                        continue
+
             if full_log:
-                print("  Tags:")
+                print("  Serialized metadata:")
                 for k, v in tags_to_write.items():
                     preview = v if len(v) <= 120 else (v[:117] + "...")
                     print(f"    - {k}: {preview}")
+                if test_mode_setting == "verbose":
+                    print("  TMDb metadata:")
+                    print(json.dumps(details, indent=2, sort_keys=True))
 
             cover_art_path = None
             cover_url = ""
@@ -521,6 +340,29 @@ def run(options: RunOptions, cfg: Config) -> int:
                         print("  Cover art: none")
 
             if write_enabled:
+                if backup_original and run_backup_dir and not test_mode:
+                    required_bytes = stat.st_size if stat else 0
+                    if required_bytes and not has_sufficient_backup_space(run_backup_dir, required_bytes):
+                        print("  ❌ Not enough space for backup (skipping).")
+                        skip_count += 1
+                        append_run_log(
+                            run_log_path,
+                            f"[backup] {path}\nerror: insufficient space for backup\n",
+                        )
+                        if run_manifest_path:
+                            write_manifest_record(
+                                run_manifest_path,
+                                {
+                                    "path": str(path),
+                                    "status": "skipped",
+                                    "reason": "insufficient_backup_space",
+                                    "tmdb_id": metadata.tmdb_id,
+                                    "title": metadata.title,
+                                    "mtime": stat.st_mtime if stat else None,
+                                    "size": stat.st_size if stat else None,
+                                },
+                            )
+                        continue
                 original_backup_path = None
                 if backup_original and run_backup_dir:
                     original_backup_path = backup_original_path(
@@ -530,6 +372,14 @@ def run(options: RunOptions, cfg: Config) -> int:
                         backup_suffix,
                     )
                 if cover_art_enabled and cover_url and not test_mode:
+                    if not override_existing:
+                        try:
+                            if inspector.has_attached_picture(path):
+                                if full_log:
+                                    print("  Cover art already present; skipping download")
+                                cover_url = ""
+                        except Exception as exc:
+                            print(f"  ⚠️ Could not inspect existing artwork: {exc}")
                     cover_art_path = download_cover_art(
                         session=tmdb_ctx.session,
                         url=cover_url,
@@ -574,7 +424,7 @@ def run(options: RunOptions, cfg: Config) -> int:
                     status = "failed"
                     reason = "ffmpeg_failed"
                 if run_manifest_path:
-                    _write_manifest_record(
+                    write_manifest_record(
                         run_manifest_path,
                         {
                             "path": str(path),
@@ -589,7 +439,7 @@ def run(options: RunOptions, cfg: Config) -> int:
             else:
                 ok_count += 1
                 if run_manifest_path:
-                    _write_manifest_record(
+                    write_manifest_record(
                         run_manifest_path,
                         {
                             "path": str(path),
@@ -605,9 +455,9 @@ def run(options: RunOptions, cfg: Config) -> int:
         except requests.HTTPError as e:
             print(f"  ❌ TMDb HTTP error: {e}")
             fail_count += 1
-            _append_run_log(run_log_path, f"[tmdb] {path}\nerror: {e}\n")
+            append_run_log(run_log_path, f"[tmdb] {path}\nerror: {e}\n")
             if run_manifest_path:
-                _write_manifest_record(
+                write_manifest_record(
                     run_manifest_path,
                     {
                         "path": str(path),
@@ -622,9 +472,9 @@ def run(options: RunOptions, cfg: Config) -> int:
         except Exception as e:
             print(f"  ❌ Error: {e}")
             fail_count += 1
-            _append_run_log(run_log_path, f"[error] {path}\nerror: {e}\n")
+            append_run_log(run_log_path, f"[error] {path}\nerror: {e}\n")
             if run_manifest_path:
-                _write_manifest_record(
+                write_manifest_record(
                     run_manifest_path,
                     {
                         "path": str(path),

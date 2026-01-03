@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import sys
-
-from cli import get_inspect_options, get_run_options
+from cli import parse_cli
 from config import load_config
 from core.inspect import inspect as inspect_files
 from core.run import run
@@ -18,12 +16,7 @@ def main() -> int:
         Process exit code.
     """
     print("\nTMDb Movie Tagger (config-driven)\n")
-    if len(sys.argv) > 1 and sys.argv[1] == "inspect":
-        options = get_inspect_options(sys.argv[2:])
-        command = "inspect"
-    else:
-        options = get_run_options(sys.argv[1:])
-        command = "run"
+    command, options = parse_cli()
     if options.file:
         if not options.file.exists() or not options.file.is_file():
             print(f"Not a file: {options.file}")
@@ -46,6 +39,8 @@ def main() -> int:
             return 2
 
     cfg = load_config(options.config_path)
+    if getattr(options, "override_existing", False):
+        cfg.write.override_existing = True
     if command == "inspect":
         inspect_files(
             root=options.root,

@@ -75,4 +75,4 @@ def test_test_mode_verbose_logs_metadata(capsys, tmp_path: Path, monkeypatch) ->
     assert exit_code == 0
     assert "TMDb metadata:" in out
     assert '"title": "Top Gun"' in out
-    assert "Tags:" in out
+    assert "Serialized metadata:" in out

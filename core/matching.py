@@ -19,6 +19,11 @@ def clean_filename_for_search(stem: str, strip_tokens: List[str]) -> Tuple[str, 
     s = stem.replace("_", " ").replace(".", " ")
     s = re.sub(r"(?<=\w)-(?=\w)", "__HYPHEN__", s)
     s = s.replace("-", " ").replace("__HYPHEN__", "-")
+    year = None
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", s)
+    if m:
+        year = int(m.group(1))
+        s = re.sub(r"\b(19\d{2}|20\d{2})\b", " ", s)
     # Remove bracketed edition notes like [WS] or (Unrated)
     s = re.sub(r"[\[(].*?[\])]", " ", s)
     # Remove common season/disc/volume bundles like S1V1
@@ -26,12 +31,6 @@ def clean_filename_for_search(stem: str, strip_tokens: List[str]) -> Tuple[str, 
     # Normalize disc/cd markers like "Disc 1" or "CD2"
     s = re.sub(r"\b(?:disc|cd)\s*\d+\b", " ", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", " ", s).strip()
-
-    year = None
-    m = re.search(r"\b(19\d{2}|20\d{2})\b", s)
-    if m:
-        year = int(m.group(1))
-        s = re.sub(r"\b(19\d{2}|20\d{2})\b", " ", s)
 
     acronym_map = {
         "lotr": "Lord of the Rings",

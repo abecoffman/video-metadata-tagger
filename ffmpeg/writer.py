@@ -117,29 +117,36 @@ def ffmpeg_write_metadata(
         lowered = stderr.lower()
         return "codec mjpeg" in lowered or "attached pic" in lowered
 
+    def decode_stderr(proc: subprocess.CompletedProcess[bytes]) -> str:
+        if isinstance(proc.stderr, (bytes, bytearray)):
+            return proc.stderr.decode("utf-8", errors="replace")
+        return str(proc.stderr or "")
+
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True)
+        stderr_text = decode_stderr(proc)
         if proc.returncode != 0:
             print(f"ffmpeg failed for: {input_path}")
-            print(proc.stderr.strip()[:2000])
+            print(stderr_text.strip()[:2000])
             append_log(
                 f"[ffmpeg] {input_path}\n"
                 f"cmd: {' '.join(cmd)}\n"
-                f"stderr:\n{proc.stderr}\n"
+                f"stderr:\n{stderr_text}\n"
             )
             tmp_path.unlink(missing_ok=True)
-            if cover_art_path and should_retry_without_cover_art(proc.stderr):
+            if cover_art_path and should_retry_without_cover_art(stderr_text):
                 retry_cmd = build_cmd(None)
                 retry_cmd += [str(tmp_path)]
                 append_log(f"[ffmpeg] retry without cover art for {input_path}\n")
-                proc = subprocess.run(retry_cmd, capture_output=True, text=True)
+                proc = subprocess.run(retry_cmd, capture_output=True)
+                stderr_text = decode_stderr(proc)
                 if proc.returncode != 0:
                     print(f"ffmpeg failed for: {input_path}")
-                    print(proc.stderr.strip()[:2000])
+                    print(stderr_text.strip()[:2000])
                     append_log(
                         f"[ffmpeg] {input_path}\n"
                         f"cmd: {' '.join(retry_cmd)}\n"
-                        f"stderr:\n{proc.stderr}\n"
+                        f"stderr:\n{stderr_text}\n"
                     )
                     tmp_path.unlink(missing_ok=True)
                     return False
