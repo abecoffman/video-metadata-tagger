@@ -1,0 +1,13 @@
+{
+  "mappings": {
+    "title": "{title}",
+    "date": "{release_date}",
+    "year": "{release_year}",
+    "comment": "{overview}",
+    "description": "{overview}",
+    "genre": "{genres_joined}",
+    "artist": "{production_companies_joined}",
+    "album_artist": "{production_companies_joined}"
+  },
+  "max_overview_length": 500
+}
