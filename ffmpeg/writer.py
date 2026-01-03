@@ -6,8 +6,17 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict
+
+from logger import get_logger
+
+
+log = get_logger()
+
+class ResourceBusyError(RuntimeError):
+    """Raised when output replacement fails due to a busy file."""
 
 
 def ffmpeg_write_metadata(
@@ -82,13 +91,13 @@ def ffmpeg_write_metadata(
     if test_mode:
         tmp_path = input_path.with_name(f"{input_path.stem}.tagtmp{input_path.suffix}")
         cmd += [str(tmp_path)]
-        print("TEST MODE ffmpeg cmd:", " ".join(cmd))
+        log.info(f"TEST MODE ffmpeg cmd: {' '.join(cmd)}")
         if backup_original and backup_path:
-            print(f"TEST MODE would backup original to: {backup_path}")
+            log.info(f"TEST MODE would backup original to: {backup_path}")
         if atomic_replace:
-            print("TEST MODE would atomically replace original with temp output")
+            log.info("TEST MODE would atomically replace original with temp output")
         else:
-            print("TEST MODE would move temp output over original")
+            log.info("TEST MODE would move temp output over original")
         return True
 
     tmp_dir = str(input_path.parent)
@@ -99,7 +108,7 @@ def ffmpeg_write_metadata(
     cmd += [str(tmp_path)]
 
     if dry_run:
-        print("DRY RUN ffmpeg cmd:", " ".join(cmd))
+        log.info(f"DRY RUN ffmpeg cmd: {' '.join(cmd)}")
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
@@ -126,8 +135,8 @@ def ffmpeg_write_metadata(
         proc = subprocess.run(cmd, capture_output=True)
         stderr_text = decode_stderr(proc)
         if proc.returncode != 0:
-            print(f"ffmpeg failed for: {input_path}")
-            print(stderr_text.strip()[:2000])
+            log.info(f"ffmpeg failed for: {input_path}")
+            log.info(stderr_text.strip()[:2000])
             append_log(
                 f"[ffmpeg] {input_path}\n"
                 f"cmd: {' '.join(cmd)}\n"
@@ -141,8 +150,8 @@ def ffmpeg_write_metadata(
                 proc = subprocess.run(retry_cmd, capture_output=True)
                 stderr_text = decode_stderr(proc)
                 if proc.returncode != 0:
-                    print(f"ffmpeg failed for: {input_path}")
-                    print(stderr_text.strip()[:2000])
+                    log.info(f"ffmpeg failed for: {input_path}")
+                    log.info(stderr_text.strip()[:2000])
                     append_log(
                         f"[ffmpeg] {input_path}\n"
                         f"cmd: {' '.join(retry_cmd)}\n"
@@ -160,19 +169,50 @@ def ffmpeg_write_metadata(
             backup_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(input_path, backup_path)
 
-        if atomic_replace:
-            tmp_path.replace(input_path)
-        else:
-            shutil.move(str(tmp_path), str(input_path))
+        def replace_with_retries(src: Path, dest: Path, use_atomic: bool) -> bool:
+            for attempt in range(3):
+                try:
+                    if use_atomic:
+                        src.replace(dest)
+                    else:
+                        shutil.move(str(src), str(dest))
+                    return True
+                except OSError as exc:
+                    if getattr(exc, "errno", None) != 16:
+                        raise
+                    time.sleep(0.5 * (attempt + 1))
+            return False
+
+        try:
+            if not replace_with_retries(tmp_path, input_path, atomic_replace):
+                raise ResourceBusyError(f"Resource busy: {tmp_path}")
+        except ResourceBusyError as exc:
+            log.info(f"Error replacing output for {input_path}: {exc}")
+            append_log(f"[ffmpeg] {input_path}\nerror: replace failed: {exc}\n")
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                append_log(f"[ffmpeg] {input_path}\nerror: cleanup failed: {cleanup_exc}\n")
+            raise
+        except OSError as exc:
+            log.info(f"Error replacing output for {input_path}: {exc}")
+            append_log(f"[ffmpeg] {input_path}\nerror: replace failed: {exc}\n")
+            tmp_path.unlink(missing_ok=True)
+            return False
 
         return True
     except FileNotFoundError:
-        print(f"Could not find ffmpeg at: {ffmpeg_path}")
+        log.info(f"Could not find ffmpeg at: {ffmpeg_path}")
         append_log(f"[ffmpeg] {input_path}\nerror: ffmpeg not found at {ffmpeg_path}\n")
         tmp_path.unlink(missing_ok=True)
         return False
+    except ResourceBusyError:
+        raise
     except Exception as e:
-        print(f"Error writing metadata for {input_path}: {e}")
+        log.info(f"Error writing metadata for {input_path}: {e}")
         append_log(f"[ffmpeg] {input_path}\nerror: {e}\n")
-        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError as exc:
+            append_log(f"[ffmpeg] {input_path}\nerror: cleanup failed: {exc}\n")
         return False

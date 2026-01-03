@@ -15,7 +15,10 @@ class TmdbConfig:
     language: str = "en-US"
     include_adult: bool = False
     min_score: float = 2.0
+    fallback_min_score: float = 1.5
+    fallback_min_votes: int = 10
     request_delay_seconds: float = 0.25
+    allow_tv_fallback: bool = True
 
 
 @dataclass
@@ -42,12 +45,15 @@ class WriteConfig:
     enabled: bool = True
     dry_run: bool = False
     override_existing: bool = False
-    backup_original: bool = True
+    backup_original: bool = False
     backup_dir: str = "runs"
     backup_suffix: str = ".bak"
-    cover_art_enabled: bool = False
+    cover_art_enabled: bool = True
     cover_art_size: str = "w500"
     ffmpeg_path: str = "ffmpeg"
+    atomicparsley_path: str = "AtomicParsley"
+    metadata_tool: str = "atomicparsley"
+    rdns_namespace: str = "local.tmdb"
     ffmpeg_analyzeduration: str | int | None = None
     ffmpeg_probe_size: str | int | None = None
     atomic_replace: bool = True
@@ -71,3 +77,4 @@ class Config:
     matching: MatchingConfig
     write: WriteConfig
     serialization: SerializationConfig
+    serialization_tv: SerializationConfig

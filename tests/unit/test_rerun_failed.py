@@ -4,6 +4,7 @@ from pathlib import Path
 
 import main
 from core import run
+from tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path) -> None:
@@ -23,7 +24,14 @@ def _write_config(path: Path, backup_dir: Path) -> None:
 
 
 def _mock_tmdb(monkeypatch) -> None:
-    monkeypatch.setattr(run, "tmdb_search_best_match", lambda **kwargs: {"id": 1})
+    monkeypatch.setattr(
+        run,
+        "tmdb_search_best_match_with_candidates_scored",
+        lambda **kwargs: tmdb_client.MatchCandidate(
+            result={"id": 1}, score=9.0, votes=100, popularity=5.0, media_type="movie"
+        ),
+    )
+    monkeypatch.setattr(run, "tmdb_search_best_tv_match_with_candidates_scored", lambda **kwargs: None)
     monkeypatch.setattr(
         run,
         "tmdb_movie_details",

@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
 from ffmpeg.backups import create_run_backup_dir
+
+
+def cleanup_run_dirs(base_dir: Path) -> None:
+    """Delete previous run directories."""
+    if not base_dir.exists():
+        return
+    for entry in base_dir.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
 
 
 @dataclass
@@ -75,5 +85,6 @@ def setup_run_dirs(restore_backup: Path | None, backup_dir: Path, test_mode: boo
     if test_mode:
         return RunDirs(None, None, None)
 
+    cleanup_run_dirs(backup_dir)
     run_backup_dir = create_run_backup_dir(backup_dir)
     return RunDirs(run_backup_dir, run_backup_dir / "run.jsonl", run_backup_dir / "run.log")

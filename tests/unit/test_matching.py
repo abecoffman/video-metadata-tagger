@@ -1,4 +1,4 @@
-from core.matching import clean_filename_for_search
+from core.matching import build_search_candidates, clean_filename_for_search, is_extras_title
 
 
 def test_clean_filename_for_search_examples() -> None:
@@ -27,3 +27,21 @@ def test_clean_filename_for_search_examples() -> None:
     ]
     for stem, expected in cases:
         assert clean_filename_for_search(stem, tokens) == expected
+
+
+def test_build_search_candidates_splits_and_corrects() -> None:
+    candidates = build_search_candidates("Eddie Murphy Boomerang")
+    assert "Eddie Murphy Boomerang" in candidates
+    candidates = build_search_candidates("Napaleon Dynamite")
+    assert "Napaleon Dynamite" in candidates
+    candidates = build_search_candidates("Am\u00e9lie")
+    assert "Amelie" in candidates
+
+
+def test_extras_title_detection() -> None:
+    assert is_extras_title("LOTR - Appendices Part One – From Book to Vision") is True
+
+
+def test_build_search_candidates_avoids_single_token_fallback() -> None:
+    candidates = build_search_candidates("Chappelle Show S1 D2")
+    assert "Show" not in candidates

@@ -1,84 +1,66 @@
 # Movie Metadata Updater
 
-Tag movie files using TMDb metadata and write tags via ffmpeg remux. The script scans your library (or a single file), looks up a best match on TMDb, and applies the configured tags. It can also attach poster art, back up metadata, and restore from runs.
+Tag MP4/M4V movie and TV files using TMDb metadata, apply structured tags, and attach poster art. The tool supports safe runs, per-run logs, optional metadata backups, and an inspect mode to spot missing fields.
 
-## Features
+## What This Does
 
-- TMDb lookup with filename cleanup and fuzzy title matching
-- Configurable tag mappings
-- Optional cover art attachment (poster image)
-- Per-run metadata backups + restore
-- Rerun only failed files from a prior run
-- Test mode (basic/verbose) for safe previews
+- Finds best TMDb matches using filename cleanup + RapidFuzz similarity
+- Handles movies and TV series (TV always enabled)
+- Writes metadata via AtomicParsley (default) or ffmpeg remux
+- Downloads and embeds poster art by default
+- Records run manifests + logs and supports restore from run metadata
 
-## Requirements
+## Quick Start
 
-- Python 3.9+
-- `ffmpeg` installed and on PATH (or set `write.ffmpeg_path`)
-- TMDb API key (`TMDB_API_KEY`)
-
-### Install ffmpeg
-
-- macOS (Homebrew): `brew install ffmpeg`
-- Ubuntu/Debian: `sudo apt-get install ffmpeg`
-- Fedora: `sudo dnf install ffmpeg`
-- Windows (winget): `winget install Gyan.FFmpeg`
-
-## Installation
+Install dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-Set your API key:
+Set your TMDb API key:
 
 ```bash
 export TMDB_API_KEY="your_key_here"
 ```
 
-## Quick Start
-
-Scan a directory:
+Run against a directory:
 
 ```bash
 python3 main.py --root /path/to/movies
 ```
 
-Run is the default command (you can also use `run` explicitly):
-
-```bash
-python3 main.py run --root /path/to/movies
-```
-
-Single file:
+Run a single file:
 
 ```bash
 python3 main.py --file "/path/to/Top Gun (1986).m4v"
 ```
 
-Test mode (basic):
+Inspect a single file:
 
 ```bash
-python3 main.py --root /path/to/movies --test
+python3 main.py inspect --file "/path/to/Top Gun (1986).m4v"
 ```
 
-Verbose test mode:
+## How Matching Works
 
-```bash
-python3 main.py --root /path/to/movies --test verbose
-```
+- Filenames are cleaned (remove noise tokens, normalize punctuation, preserve hyphens).
+- Titles are normalized for fuzzy matching (RapidFuzz).
+- Movie and TV results are both scored when TV fallback is enabled.
+- If scores are close, higher popularity/votes win (helps prefer well-known TV shows).
 
 ## Configuration
 
-The script loads module-aligned config files by default. You can still pass a single `config.json` with `--config` to override any section (it can be empty if you don't need overrides).
+Defaults come from module config files. You can override them with a single `config.json` via `--config`.
 
-Default config locations:
+Default config files:
 
 - `tmdb/config.json`
 - `file_io/config.json`
 - `core/matching_config.json`
 - `ffmpeg/config.json`
 - `core/serialization_config.json`
+- `core/serialization_tv_config.json`
 
 ### tmdb (`tmdb/config.json`)
 - `api_key_env` (default: `TMDB_API_KEY`)
@@ -86,7 +68,10 @@ Default config locations:
 - `language` (default: `en-US`)
 - `include_adult` (default: `false`)
 - `min_score` (default: `2.0`)
+- `fallback_min_score` (default: `1.5`)
+- `fallback_min_votes` (default: `10`)
 - `request_delay_seconds` (default: `0.25`)
+- `allow_tv_fallback` (default: `true`)
 
 ### scan (`file_io/config.json`)
 - `extensions` (list of extensions to scan)
@@ -101,39 +86,53 @@ Default config locations:
 - `enabled` (default: `true`)
 - `dry_run` (default: `false`)
 - `override_existing` (default: `false`)
-- `backup_original` (default: `true`)
+- `backup_original` (default: `false`)
 - `backup_dir` (default: `runs`)
 - `backup_suffix` (default: `.bak`)
-- `cover_art_enabled` (default: `false`)
+- `cover_art_enabled` (default: `true`)
 - `cover_art_size` (default: `w500`)
 - `ffmpeg_path` (default: `ffmpeg`)
+- `atomicparsley_path` (default: `AtomicParsley`)
+- `metadata_tool` (`ffmpeg` or `atomicparsley`, default: `atomicparsley`)
+- `rdns_namespace` (default: `local.tmdb`, used for AtomicParsley freeform tags)
 - `ffmpeg_analyzeduration` (default: `null`)
 - `ffmpeg_probe_size` (default: `null`)
 - `atomic_replace` (default: `true`)
 - `test_mode` (`basic` or `verbose`)
 
+When `metadata_tool=atomicparsley`, tags not supported by AtomicParsley flags are written as freeform rDNS atoms using `rdns_namespace`.
+
 ### serialization (`core/serialization_config.json`)
-- `mappings` (key/value metadata mappings)
+- `mappings` (key/value metadata mappings for movies)
 - `max_overview_length` (default: `500`)
 
-Example mapping (TMDb JSON fields → tag keys). Arrays are serialized as comma-separated strings:
+### serialization_tv (`core/serialization_tv_config.json`)
+- `mappings` (key/value metadata mappings for TV)
+- `max_overview_length` (default: `500`)
+
+## Metadata Mapping
+
+Arrays are serialized as comma-separated strings. `media_type` is `movie` or `tv`.
+
+Movie mapping example:
 
 ```json
 {
   "mappings": {
     "title": "{title}",
+    "media_type": "{media_type}",
     "date": "{release_date}",
-    "year": "{release_date}",
+    "year": "{release_year}",
     "description": "{overview}",
     "comment": "{overview}",
-    "genre": "{genres[].name}",
-    "producer": "{production_companies[].name}",
-    "country": "{origin_country[]}",
+    "genre": "{genres_joined}",
+    "producer": "{production_companies_joined}",
+    "country": "{origin_countries_joined}",
     "original_title": "{original_title}",
     "tagline": "{tagline}",
     "language": "{original_language}",
     "imdb_id": "{imdb_id}",
-    "tmdb_id": "{id}",
+    "tmdb_id": "{tmdb_id}",
     "runtime": "{runtime}",
     "rating": "{vote_average}",
     "votes": "{vote_count}",
@@ -142,9 +141,46 @@ Example mapping (TMDb JSON fields → tag keys). Arrays are serialized as comma-
     "revenue": "{revenue}",
     "status": "{status}",
     "homepage": "{homepage}",
-    "spoken_languages": "{spoken_languages[].english_name}",
-    "production_countries": "{production_countries[].name}",
-    "collection": "{belongs_to_collection.name}"
+    "spoken_languages": "{spoken_languages_joined}",
+    "production_countries": "{production_countries_joined}",
+    "collection": "{collection_name}",
+    "extras": "{extras}"
+  }
+}
+```
+
+TV mapping example:
+
+```json
+{
+  "mappings": {
+    "title": "{title}",
+    "media_type": "{media_type}",
+    "date": "{release_date}",
+    "year": "{release_year}",
+    "description": "{overview}",
+    "comment": "{overview}",
+    "genre": "{genres_joined}",
+    "producer": "{production_companies_joined}",
+    "country": "{origin_countries_joined}",
+    "original_title": "{original_title}",
+    "tagline": "{tagline}",
+    "language": "{original_language}",
+    "imdb_id": "{imdb_id}",
+    "tmdb_id": "{tmdb_id}",
+    "runtime": "{runtime}",
+    "rating": "{vote_average}",
+    "votes": "{vote_count}",
+    "popularity": "{popularity}",
+    "status": "{status}",
+    "homepage": "{homepage}",
+    "spoken_languages": "{spoken_languages_joined}",
+    "production_countries": "{production_countries_joined}",
+    "networks": "{networks_joined}",
+    "episode_runtime": "{episode_runtime}",
+    "seasons": "{number_of_seasons}",
+    "episodes": "{number_of_episodes}",
+    "extras": "{extras}"
   }
 }
 ```
@@ -157,58 +193,35 @@ Only process M4V files:
 python3 main.py --root /path/to/movies --only-ext m4v
 ```
 
-Restore metadata from a backup run:
-
-```bash
-python3 main.py --restore-backup runs/20250102-153000 --file "/path/to/movie.m4v"
-```
-
-Rerun only failed files from a prior run:
-
-```bash
-python3 main.py --rerun-failed runs/20250102-153000
-```
-
 Override existing metadata values:
 
 ```bash
 python3 main.py --root /path/to/movies --override-existing
 ```
 
-Inspect files and report missing metadata:
+Restore metadata from a prior run:
 
 ```bash
-python3 main.py inspect --root /path/to/movies
+python3 main.py --restore-backup runs/20250102-153000 --file "/path/to/movie.m4v"
 ```
 
-Write the inspect report to a specific log file:
+Rerun failed files from a prior run:
+
+```bash
+python3 main.py --rerun-failed runs/20250102-153000
+```
+
+Inspect files and write a report:
 
 ```bash
 python3 main.py inspect --root /path/to/movies --log /path/to/inspect.log
 ```
 
-## Project Structure
+## Runs & Artifacts
 
-- `core/` main run flow, matching, and serialization config.
-- `ffmpeg/` metadata writing, backups, and write config.
-- `file_io/` scanning, prompt utilities, and scan config.
-- `tmdb/` TMDb API client, image helpers, and config.
-- `tests/` unit and integration tests.
+Each run creates a directory under `runs/` (unless running in test mode). Previous runs are deleted before a new run starts.
 
-## Architecture
-
-```
-CLI (main.py/cli.py)
-  -> config/loader
-  -> core/run or core/inspect
-       -> core/services (file_selection, tmdb_resolver, write_pipeline)
-       -> tmdb/* (API + images)
-       -> ffmpeg/* (inspect + write + backups)
-```
-
-## Backups & Logs
-
-Each run creates a directory under `runs/` (unless running in test mode). Example:
+Example:
 
 ```
 runs/20250102-153000/
@@ -217,20 +230,62 @@ runs/20250102-153000/
   My Movie.m4v.ffmeta
 ```
 
-### Generated Files per Run
+Files created per run:
+- `run.jsonl` per-file status, match details, and error reasons
+- `run.log` full stderr output on failures
+- `*.ffmeta` metadata snapshots for restore
+- `*.bak` optional full-file backups (disabled by default)
 
-- `run.jsonl` records per-file status and metadata for the run.
-- `run.log` captures full error output on failures.
-- `*.ffmeta` files are metadata snapshots used for restore.
-- `*.bak` files are original file backups stored in the same run directory.
+## Inspect Mode
+
+Inspect reads existing tags via ffprobe and reports missing fields. It recognizes:
+- AtomicParsley rDNS atoms (`local.tmdb`)
+- MP4/iTunes atom names (e.g., `©day`, `©nam`)
 
 ## Troubleshooting
 
-- **"unknown codec" / probe errors**: Increase `write.ffmpeg_analyzeduration` and `write.ffmpeg_probe_size`.
-- **ffmpeg not found**: Set `write.ffmpeg_path` or install ffmpeg.
-- **Wrong match**: Adjust `tmdb.min_score` or refine filename cleanup in `matching`.
+- **AtomicParsley not found**: install it or set `write.atomicparsley_path`.
+- **ffmpeg not found**: install it or set `write.ffmpeg_path`.
+- **Resource busy**: try rerun; the script retries once automatically.
+- **Missing metadata in inspect**: ensure mapping keys exist or check rDNS namespace.
+- **Wrong match**: raise `tmdb.min_score` or adjust matching tokens.
+- **Artwork not updating**: rerun with `--override-existing` to remove existing artwork before writing a new cover.
 
-## Testing
+## Install Tools
+
+Install ffmpeg:
+
+- macOS (Homebrew): `brew install ffmpeg`
+- Ubuntu/Debian: `sudo apt-get install ffmpeg`
+- Fedora: `sudo dnf install ffmpeg`
+- Windows (winget): `winget install Gyan.FFmpeg`
+
+Install AtomicParsley:
+
+- macOS (Homebrew): `brew install atomicparsley`
+- Ubuntu/Debian: `sudo apt-get install atomicparsley`
+
+## Project Layout
+
+- `core/` main pipeline, matching, serialization
+- `ffmpeg/` write tools, backups, inspect helpers
+- `file_io/` scanning, prompt utilities
+- `tmdb/` API client + helpers
+- `config/` config loader and models
+- `tests/` unit + integration tests
+
+## Architecture
+
+```
+CLI (main.py/cli.py)
+  -> config/loader
+  -> core/run or core/inspect
+       -> core/services (file_selection, write_pipeline)
+       -> tmdb/* (client + helpers + service)
+       -> ffmpeg/* (inspect + write + backups)
+```
+
+## Tests
 
 Unit tests:
 

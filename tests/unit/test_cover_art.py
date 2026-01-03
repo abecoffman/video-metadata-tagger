@@ -5,7 +5,7 @@ from typing import Optional
 
 import main
 from core import run
-from core.services import tmdb_resolver
+from tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
@@ -21,6 +21,8 @@ def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
             "cover_art_enabled": enabled,
             "cover_art_size": "w185",
             "ffmpeg_path": "ffmpeg",
+            "atomicparsley_path": "AtomicParsley",
+            "metadata_tool": "atomicparsley",
             "atomic_replace": True,
         },
         "serialization": {"mappings": {"title": "{title}"}, "max_overview_length": 500},
@@ -29,7 +31,14 @@ def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
 
 
 def _mock_tmdb(monkeypatch, poster_path: Optional[str]) -> None:
-    monkeypatch.setattr(run, "tmdb_search_best_match", lambda **kwargs: {"id": 1})
+    monkeypatch.setattr(
+        run,
+        "tmdb_search_best_match_with_candidates_scored",
+        lambda **kwargs: tmdb_client.MatchCandidate(
+            result={"id": 1}, score=9.0, votes=100, popularity=5.0, media_type="movie"
+        ),
+    )
+    monkeypatch.setattr(run, "tmdb_search_best_tv_match_with_candidates_scored", lambda **kwargs: None)
     monkeypatch.setattr(
         run,
         "tmdb_movie_details",
@@ -41,7 +50,7 @@ def _mock_tmdb(monkeypatch, poster_path: Optional[str]) -> None:
         },
     )
     monkeypatch.setattr(
-        tmdb_resolver,
+        tmdb_client,
         "tmdb_configuration",
         lambda *args, **kwargs: {
             "images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}
@@ -64,20 +73,22 @@ def test_cover_art_downloads_and_attaches(tmp_path: Path, monkeypatch) -> None:
     def fake_download(session, url, suffix):
         return cover_file
 
-    captured = {"cover": None}
+    captured = {"cover": None, "remove": None}
 
     def fake_write(**kwargs):
         captured["cover"] = kwargs.get("cover_art_path")
+        captured["remove"] = kwargs.get("remove_existing_artwork")
         return True
 
     monkeypatch.setattr(run, "download_cover_art", fake_download)
-    monkeypatch.setattr(run, "ffmpeg_write_metadata", fake_write)
+    monkeypatch.setattr(run, "atomicparsley_write_metadata", fake_write)
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie)])
 
     exit_code = main.main()
 
     assert exit_code == 0
     assert captured["cover"] == cover_file
+    assert captured["remove"] is False
     assert not cover_file.exists()
 
 
@@ -89,7 +100,7 @@ def test_cover_art_skips_when_missing_poster(tmp_path: Path, monkeypatch) -> Non
     _mock_tmdb(monkeypatch, poster_path=None)
     monkeypatch.setenv("TMDB_API_KEY", "x")
 
-    called = {"download": False, "cover": None}
+    called = {"download": False, "cover": None, "remove": None}
 
     def fake_download(session, url, suffix):
         called["download"] = True
@@ -97,10 +108,11 @@ def test_cover_art_skips_when_missing_poster(tmp_path: Path, monkeypatch) -> Non
 
     def fake_write(**kwargs):
         called["cover"] = kwargs.get("cover_art_path")
+        called["remove"] = kwargs.get("remove_existing_artwork")
         return True
 
     monkeypatch.setattr(run, "download_cover_art", fake_download)
-    monkeypatch.setattr(run, "ffmpeg_write_metadata", fake_write)
+    monkeypatch.setattr(run, "atomicparsley_write_metadata", fake_write)
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie)])
 
     exit_code = main.main()
@@ -108,6 +120,7 @@ def test_cover_art_skips_when_missing_poster(tmp_path: Path, monkeypatch) -> Non
     assert exit_code == 0
     assert called["download"] is False
     assert called["cover"] is None
+    assert called["remove"] is False
 
 
 def test_cover_art_logs_selected_image_in_verbose(capsys, tmp_path: Path, monkeypatch) -> None:

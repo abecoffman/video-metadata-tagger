@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import List, Tuple
 
 
@@ -74,3 +75,65 @@ def clean_filename_for_search(stem: str, strip_tokens: List[str]) -> Tuple[str, 
     title = " ".join(parts).strip()
     title = re.sub(r"\s+", " ", title)
     return title, year
+
+
+_EXTRAS_TOKENS = {
+    "appendix",
+    "appendices",
+    "bonus",
+    "commentary",
+    "deleted",
+    "extra",
+    "extras",
+    "featurette",
+    "featurettes",
+    "outtakes",
+    "trailer",
+    "trailers",
+}
+
+
+def _tokenize_title(title: str) -> List[str]:
+    normalized = unicodedata.normalize("NFKD", title)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return re.findall(r"[a-z0-9]+", normalized.lower())
+
+
+def is_extras_title(title: str) -> bool:
+    """Return True if the title appears to be bonus/extras content."""
+    tokens = set(_tokenize_title(title))
+    return bool(tokens.intersection(_EXTRAS_TOKENS))
+
+
+def build_search_candidates(title: str) -> List[str]:
+    """Build search candidate titles from a cleaned title."""
+    candidates: List[str] = []
+    if title:
+        candidates.append(title)
+
+    for part in re.split(r"\s*[-:]\s*", title):
+        part = part.strip()
+        if part and part != title:
+            candidates.append(part)
+
+    tokens = [t for t in title.split() if t]
+    if len(tokens) >= 3:
+        candidates.append(" ".join(tokens[-3:]))
+    if len(tokens) >= 2:
+        candidates.append(" ".join(tokens[-2:]))
+    if len(tokens) == 1:
+        candidates.append(tokens[-1])
+
+    def strip_diacritics(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value)
+        return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    unique: List[str] = []
+    for candidate in candidates:
+        cleaned = re.sub(r"\s+", " ", candidate).strip()
+        if cleaned and cleaned not in unique:
+            unique.append(cleaned)
+        deaccented = strip_diacritics(cleaned)
+        if deaccented and deaccented not in unique:
+            unique.append(deaccented)
+    return unique

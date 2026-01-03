@@ -4,6 +4,7 @@ from pathlib import Path
 
 import main
 from core import run
+from tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path, extensions=None) -> None:
@@ -23,11 +24,23 @@ def _write_config(path: Path, backup_dir: Path, extensions=None) -> None:
 
 
 def _mock_tmdb(monkeypatch) -> None:
-    monkeypatch.setattr(run, "tmdb_search_best_match", lambda **kwargs: {"id": 1})
+    monkeypatch.setattr(
+        run,
+        "tmdb_search_best_match_with_candidates_scored",
+        lambda **kwargs: tmdb_client.MatchCandidate(
+            result={"id": 1}, score=9.0, votes=100, popularity=5.0, media_type="movie"
+        ),
+    )
+    monkeypatch.setattr(run, "tmdb_search_best_tv_match_with_candidates_scored", lambda **kwargs: None)
     monkeypatch.setattr(
         run,
         "tmdb_movie_details",
         lambda *args, **kwargs: {"id": 1, "title": "Top Gun", "release_date": "1986-05-16"},
+    )
+    monkeypatch.setattr(
+        tmdb_client,
+        "tmdb_configuration",
+        lambda *args, **kwargs: {"images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}},
     )
     monkeypatch.setattr(run.time, "sleep", lambda *_args, **_kwargs: None)
 
@@ -164,3 +177,38 @@ def test_cli_only_ext_filters_files(capsys, tmp_path: Path, monkeypatch) -> None
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Found 1 file(s)." in out
+
+
+def test_cli_falls_back_to_tv_search(capsys, tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "movies"
+    root.mkdir()
+    (root / "Amelie.m4v").write_text("data", encoding="utf-8")
+    cfg_path = tmp_path / "config.json"
+    _write_config(cfg_path, tmp_path / "runs")
+    monkeypatch.setattr(run, "tmdb_search_best_match_with_candidates_scored", lambda **kwargs: None)
+    monkeypatch.setattr(
+        run,
+        "tmdb_search_best_tv_match_with_candidates_scored",
+        lambda **kwargs: tmdb_client.MatchCandidate(
+            result={"id": 2}, score=8.5, votes=200, popularity=7.0, media_type="tv"
+        ),
+    )
+    monkeypatch.setattr(
+        run,
+        "tmdb_tv_details",
+        lambda *args, **kwargs: {"id": 2, "name": "Amelie", "first_air_date": "2001-04-25"},
+    )
+    monkeypatch.setattr(
+        tmdb_client,
+        "tmdb_configuration",
+        lambda *args, **kwargs: {"images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}},
+    )
+    monkeypatch.setattr(run.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("TMDB_API_KEY", "x")
+    monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--root", str(root), "--test", "verbose"])
+
+    exit_code = main.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "TMDb TV: matched 'Amelie' (2001)" in out
