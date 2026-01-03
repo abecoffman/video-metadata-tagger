@@ -32,6 +32,7 @@ class RunOptions:
     rerun_failed: Path | None
     only_exts: list[str]
     test_mode: str | None
+    override_existing: bool
 
 
 @dataclass
@@ -58,6 +59,11 @@ def _parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
     _add_common_args(parser)
     parser.add_argument("--restore-backup", help="Restore metadata from backup run directory")
     parser.add_argument("--rerun-failed", help="Rerun files that failed in a prior run")
+    parser.add_argument(
+        "--override-existing",
+        action="store_true",
+        help="Override existing metadata values when writing tags",
+    )
     parser.add_argument(
         "--test",
         nargs="?",
@@ -160,6 +166,7 @@ def get_run_options(argv: list[str] | None = None) -> RunOptions:
         rerun_failed=rerun_failed,
         only_exts=only_exts,
         test_mode=args.test,
+        override_existing=bool(args.override_existing),
     )
 
 
@@ -190,3 +197,18 @@ def get_inspect_options(argv: list[str] | None = None) -> InspectOptions:
         only_exts=only_exts,
         log_path=log_path,
     )
+
+
+def parse_cli(argv: list[str] | None = None) -> tuple[str, RunOptions | InspectOptions]:
+    """Parse command-line arguments and return the command name and options."""
+    if argv is None:
+        import sys
+
+        args = sys.argv[1:]
+    else:
+        args = argv
+    if args and args[0] == "inspect":
+        return "inspect", get_inspect_options(args[1:])
+    if args and args[0] == "run":
+        return "run", get_run_options(args[1:])
+    return "run", get_run_options(args)

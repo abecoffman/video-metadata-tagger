@@ -6,8 +6,24 @@
     "comment": "{overview}",
     "description": "{overview}",
     "genre": "{genres_joined}",
-    "artist": "{production_companies_joined}",
-    "album_artist": "{production_companies_joined}"
+    "producer": "{production_companies_joined}",
+    "country": "{origin_countries_joined}",
+    "original_title": "{original_title}",
+    "tagline": "{tagline}",
+    "language": "{original_language}",
+    "imdb_id": "{imdb_id}",
+    "tmdb_id": "{tmdb_id}",
+    "runtime": "{runtime}",
+    "rating": "{vote_average}",
+    "votes": "{vote_count}",
+    "popularity": "{popularity}",
+    "budget": "{budget}",
+    "revenue": "{revenue}",
+    "status": "{status}",
+    "homepage": "{homepage}",
+    "spoken_languages": "{spoken_languages_joined}",
+    "production_countries": "{production_countries_joined}",
+    "collection": "{collection_name}"
   },
   "max_overview_length": 500
 }

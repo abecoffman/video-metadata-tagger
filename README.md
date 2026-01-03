@@ -44,6 +44,12 @@ Scan a directory:
 python3 main.py --root /path/to/movies
 ```
 
+Run is the default command (you can also use `run` explicitly):
+
+```bash
+python3 main.py run --root /path/to/movies
+```
+
 Single file:
 
 ```bash
@@ -94,6 +100,7 @@ Default config locations:
 ### write (`ffmpeg/config.json`)
 - `enabled` (default: `true`)
 - `dry_run` (default: `false`)
+- `override_existing` (default: `false`)
 - `backup_original` (default: `true`)
 - `backup_dir` (default: `runs`)
 - `backup_suffix` (default: `.bak`)
@@ -108,6 +115,39 @@ Default config locations:
 ### serialization (`core/serialization_config.json`)
 - `mappings` (key/value metadata mappings)
 - `max_overview_length` (default: `500`)
+
+Example mapping (TMDb JSON fields → tag keys). Arrays are serialized as comma-separated strings:
+
+```json
+{
+  "mappings": {
+    "title": "{title}",
+    "date": "{release_date}",
+    "year": "{release_date}",
+    "description": "{overview}",
+    "comment": "{overview}",
+    "genre": "{genres[].name}",
+    "producer": "{production_companies[].name}",
+    "country": "{origin_country[]}",
+    "original_title": "{original_title}",
+    "tagline": "{tagline}",
+    "language": "{original_language}",
+    "imdb_id": "{imdb_id}",
+    "tmdb_id": "{id}",
+    "runtime": "{runtime}",
+    "rating": "{vote_average}",
+    "votes": "{vote_count}",
+    "popularity": "{popularity}",
+    "budget": "{budget}",
+    "revenue": "{revenue}",
+    "status": "{status}",
+    "homepage": "{homepage}",
+    "spoken_languages": "{spoken_languages[].english_name}",
+    "production_countries": "{production_countries[].name}",
+    "collection": "{belongs_to_collection.name}"
+  }
+}
+```
 
 ## Usage Examples
 
@@ -129,6 +169,12 @@ Rerun only failed files from a prior run:
 python3 main.py --rerun-failed runs/20250102-153000
 ```
 
+Override existing metadata values:
+
+```bash
+python3 main.py --root /path/to/movies --override-existing
+```
+
 Inspect files and report missing metadata:
 
 ```bash
@@ -148,6 +194,17 @@ python3 main.py inspect --root /path/to/movies --log /path/to/inspect.log
 - `file_io/` scanning, prompt utilities, and scan config.
 - `tmdb/` TMDb API client, image helpers, and config.
 - `tests/` unit and integration tests.
+
+## Architecture
+
+```
+CLI (main.py/cli.py)
+  -> config/loader
+  -> core/run or core/inspect
+       -> core/services (file_selection, tmdb_resolver, write_pipeline)
+       -> tmdb/* (API + images)
+       -> ffmpeg/* (inspect + write + backups)
+```
 
 ## Backups & Logs
 

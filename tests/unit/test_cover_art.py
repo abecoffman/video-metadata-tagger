@@ -5,6 +5,7 @@ from typing import Optional
 
 import main
 from core import run
+from core.services import tmdb_resolver
 
 
 def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
@@ -40,7 +41,7 @@ def _mock_tmdb(monkeypatch, poster_path: Optional[str]) -> None:
         },
     )
     monkeypatch.setattr(
-        run,
+        tmdb_resolver,
         "tmdb_configuration",
         lambda *args, **kwargs: {
             "images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}

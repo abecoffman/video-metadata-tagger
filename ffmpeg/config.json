@@ -1,6 +1,7 @@
 {
   "enabled": true,
   "dry_run": false,
+  "override_existing": false,
   "backup_original": true,
   "backup_dir": "runs",
   "backup_suffix": ".bak",

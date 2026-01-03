@@ -8,8 +8,8 @@ from typing import Dict, Iterable, List
 
 from config import Config
 from ffmpeg.backups import create_run_backup_dir
-from ffmpeg.inspect import read_format_tags, resolve_ffprobe_path
-from file_io.scanner import find_movie_files, normalize_extensions
+from ffmpeg.inspect import MediaInspector, resolve_ffprobe_path
+from core.services.file_selection import select_files
 
 
 @dataclass
@@ -44,51 +44,53 @@ def _resolve_log_path(log_path: Path | None, cfg: Config) -> Path:
     return run_dir / "inspect.log"
 
 
-def _select_files(
-    root: Path,
-    single_file: Path | None,
-    extensions: list[str],
-    ignore_substrings: list[str],
-    max_files: int,
-) -> list[Path]:
-    if single_file:
-        return [single_file]
-    allowed_exts = normalize_extensions(extensions)
-    return find_movie_files(root, allowed_exts, ignore_substrings, max_files)
-
-
 def inspect(root: Path, file_path: Path | None, cfg: Config, only_exts: list[str], log_path: Path | None) -> InspectReport:
     """Inspect files for missing metadata and write a log report."""
     exts = only_exts or cfg.scan.extensions
-    files = _select_files(
-        root,
-        file_path,
-        exts,
-        cfg.scan.ignore_substrings,
-        cfg.scan.max_files,
+    files = select_files(
+        rerun_failed=None,
+        file_path=file_path,
+        root=root,
+        exts=exts,
+        ignore_substrings=cfg.scan.ignore_substrings,
+        max_files=cfg.scan.max_files,
+        only_exts=only_exts,
     )
+    if files is None:
+        return InspectReport(total_files=0, files_with_missing=0, total_missing_fields=0)
     print(f"Found {len(files)} file(s).")
     log_file = _resolve_log_path(log_path, cfg)
     required = list(cfg.serialization.mappings.keys())
     ffprobe_path = resolve_ffprobe_path(cfg.write.ffmpeg_path)
+    inspector = MediaInspector(ffprobe_path)
+    check_artwork = cfg.write.cover_art_enabled
 
     total_missing = 0
     files_with_missing = 0
     with log_file.open("w", encoding="utf-8") as handle:
         for movie_path in files:
             try:
-                tags = read_format_tags(ffprobe_path, movie_path)
+                tags = inspector.read_format_tags(movie_path)
                 missing = find_missing_tags(tags, required)
+                if check_artwork and not inspector.has_attached_picture(movie_path):
+                    if "artwork" not in missing:
+                        missing.append("artwork")
             except Exception as exc:  # pragma: no cover - bubble up as log line
-                handle.write(f"ERROR reading metadata: {movie_path} ({exc})\n")
+                line = f"ERROR reading metadata: {movie_path} ({exc})"
+                print(line)
+                handle.write(f"{line}\n")
                 continue
 
             if missing:
                 files_with_missing += 1
                 total_missing += len(missing)
-                handle.write(f"Missing tags: {', '.join(missing)} — {movie_path}\n")
+                line = f"Missing tags: {', '.join(missing)} — {movie_path}"
+                print(line)
+                handle.write(f"{line}\n")
             else:
-                handle.write(f"OK: {movie_path}\n")
+                line = f"OK: {movie_path}"
+                print(line)
+                handle.write(f"{line}\n")
 
     print(f"Missing metadata in {files_with_missing} file(s).")
     print(f"Log written to: {log_file}")
