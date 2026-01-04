@@ -1,5 +1,5 @@
-from tmdb.client import MatchCandidate, choose_preferred_match, normalize_title, title_similarity
-from tmdb.helpers import build_image_url, select_image_size
+from core.providers.tmdb.client import MatchCandidate, choose_preferred_match, normalize_title, title_similarity
+from core.providers.tmdb.helpers import build_image_url, select_image_size
 
 
 def test_title_similarity_prefers_closer_match() -> None:

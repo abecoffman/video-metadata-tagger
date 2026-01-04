@@ -7,24 +7,15 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config.merge import merge_sections
-from config.models import (
-    Config,
-    MatchingConfig,
-    ScanConfig,
-    SerializationConfig,
-    TmdbConfig,
-    WriteConfig,
-)
+from config.models import Config, MatchingConfig, ScanConfig, TmdbConfig, WriteConfig
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODULE_CONFIG_PATHS = {
-    "tmdb": BASE_DIR / "tmdb" / "config.json",
-    "scan": BASE_DIR / "file_io" / "config.json",
+    "tmdb": BASE_DIR / "core" / "providers" / "tmdb" / "config.json",
+    "scan": BASE_DIR / "core" / "files" / "config.json",
     "matching": BASE_DIR / "core" / "matching_config.json",
     "write": BASE_DIR / "ffmpeg" / "config.json",
-    "serialization": BASE_DIR / "core" / "serialization_config.json",
-    "serialization_tv": BASE_DIR / "core" / "serialization_tv_config.json",
 }
 
 
@@ -75,8 +66,6 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
     scan_raw = raw.get("scan", {}) or {}
     matching_raw = raw.get("matching", {}) or {}
     write_raw = raw.get("write", {}) or {}
-    serialization_raw = raw.get("serialization", {}) or {}
-    serialization_tv_raw = raw.get("serialization_tv", {}) or {}
 
     tmdb = TmdbConfig(
         api_key_env=str(tmdb_raw.get("api_key_env", "TMDB_API_KEY")),
@@ -110,14 +99,15 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
         enabled=_as_bool(write_raw.get("enabled"), True),
         dry_run=_as_bool(write_raw.get("dry_run"), False),
         override_existing=_as_bool(write_raw.get("override_existing"), False),
-        backup_original=_as_bool(write_raw.get("backup_original"), True),
-        backup_dir=str(write_raw.get("backup_dir", "runs")),
+        backup_original=_as_bool(write_raw.get("backup_original"), False),
+        backup_dir=str(write_raw.get("backup_dir", "logs")),
         backup_suffix=str(write_raw.get("backup_suffix", ".bak")),
+        max_logs=_as_int(write_raw.get("max_logs", 20), 20),
         cover_art_enabled=_as_bool(write_raw.get("cover_art_enabled"), True),
         cover_art_size=str(write_raw.get("cover_art_size", "w500")),
         ffmpeg_path=str(write_raw.get("ffmpeg_path", "ffmpeg")),
-        atomicparsley_path=str(write_raw.get("atomicparsley_path", "AtomicParsley")),
-        metadata_tool=str(write_raw.get("metadata_tool", "atomicparsley")),
+        mp4tags_path=str(write_raw.get("mp4tags_path", "mp4tags")),
+        metadata_tool=str(write_raw.get("metadata_tool", "mp4tags")),
         rdns_namespace=str(write_raw.get("rdns_namespace", "local.tmdb")),
         ffmpeg_analyzeduration=write_raw.get("ffmpeg_analyzeduration"),
         ffmpeg_probe_size=write_raw.get("ffmpeg_probe_size"),
@@ -125,21 +115,11 @@ def config_from_dict(raw: Dict[str, Any]) -> Config:
         test_mode=test_mode,
     )
 
-    serialization = SerializationConfig(
-        mappings={str(k): str(v) for k, v in (serialization_raw.get("mappings") or {}).items()},
-        max_overview_length=_as_int(serialization_raw.get("max_overview_length", 500), 500),
-    )
-    serialization_tv = SerializationConfig(
-        mappings={str(k): str(v) for k, v in (serialization_tv_raw.get("mappings") or {}).items()},
-        max_overview_length=_as_int(serialization_tv_raw.get("max_overview_length", 500), 500),
-    )
     return Config(
         tmdb=tmdb,
         scan=scan,
         matching=matching,
         write=write,
-        serialization=serialization,
-        serialization_tv=serialization_tv,
     )
 
 

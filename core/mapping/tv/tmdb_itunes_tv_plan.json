@@ -1,0 +1,97 @@
+{
+  "version": "1.0.0",
+  "targets": {
+    "ffmpeg": { "enabled": true, "path": "ffmpeg", "movflags_use_metadata_tags": true },
+    "mp4tags": { "enabled": true, "path": "mp4tags" }
+  },
+  "tv": {
+    "artwork_policy": "season_poster",
+    "max_genres": 2,
+    "country_for_certification": "US"
+  },
+  "rules": [
+    {
+      "itunes_key": "media_type",
+      "writer": "mp4tags",
+      "tmdb_sources": [],
+      "fallback": "TV Show",
+      "notes": "mp4tags sets --stik \"TV Show\"."
+    },
+    {
+      "itunes_key": "show",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}", "jsonpath": "$.name" }],
+      "notes": "ffmpeg key 'show' maps to tvsh atom.  [oai_citation:2‡docs.kdenlive.org](https://docs.kdenlive.org/en/tips_and_tricks/how-tos/adding_meta_data_to_mp4_video.html?utm_source=chatgpt.com)"
+    },
+    {
+      "itunes_key": "title",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.name" }]
+    },
+    {
+      "itunes_key": "season_number",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}/season/{s}", "jsonpath": "$.season_number" }],
+      "notes": "ffmpeg key 'season_number' maps to tvsn.  [oai_citation:3‡docs.kdenlive.org](https://docs.kdenlive.org/en/tips_and_tricks/how-tos/adding_meta_data_to_mp4_video.html?utm_source=chatgpt.com)"
+    },
+    {
+      "itunes_key": "episode_id",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.episode_number" }],
+      "transform": "to_string"
+    },
+    {
+      "itunes_key": "episode_sort",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.episode_number" }
+      ],
+      "transform": "to_int",
+      "notes": "ffmpeg key 'episode_sort' provides sortable episode number.  [oai_citation:4‡docs.kdenlive.org](https://docs.kdenlive.org/en/tips_and_tricks/how-tos/adding_meta_data_to_mp4_video.html?utm_source=chatgpt.com)"
+    },
+    {
+      "itunes_key": "description",
+      "writer": "mp4tags",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.overview" }],
+      "transform": "truncate",
+      "params": { "max_chars": 2000 },
+      "notes": "Full Description (iTunes long description)."
+    },
+    {
+      "itunes_key": "shortdesc",
+      "writer": "mp4tags",
+      "tmdb_sources": [
+        { "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.name" },
+        { "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.overview" }
+      ],
+      "transform": "first_nonempty_then_truncate",
+      "params": { "max_chars": 255 },
+      "notes": "Short Description (episode name or overview)."
+    },
+    {
+      "itunes_key": "date",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}/season/{s}/episode/{e}", "jsonpath": "$.air_date" }],
+      "transform": "year_from_date",
+      "notes": "Optional year for episodes; you may prefer full date elsewhere."
+    },
+    {
+      "itunes_key": "genre",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/tv/{id}", "jsonpath": "$.genres[*].name" }],
+      "transform": "tmdb_genres_to_apple_genres",
+      "params": { "max_genres": 2 },
+      "notes": "Write multiple genres via repeated atoms."
+    },
+    {
+      "itunes_key": "artwork",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/tv/{id}/season/{s}/images", "jsonpath": "$.posters[0].file_path" },
+        { "endpoint": "/tv/{id}/images", "jsonpath": "$.posters[0].file_path" }
+      ],
+      "transform": "choose_and_download_artwork",
+      "notes": "Season poster preferred; fallback to show poster."
+    }
+  ]
+}

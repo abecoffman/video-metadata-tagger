@@ -1,3 +1,4 @@
 requests
 rapidfuzz
 urllib3<2
+mutagen

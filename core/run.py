@@ -12,32 +12,39 @@ import requests
 
 from cli import RunOptions
 from config import Config
+from core.mapping import transforms
 from core.matching import build_search_candidates, clean_filename_for_search, is_extras_title
-from core.movie_metadata import MovieMetadata
-from core.serialization import render_tag_value
-from core.tv_metadata import TvMetadata
+from core.mapping.plan_runner import apply_plan_for_file, load_movie_plan, load_tv_plan, select_plan
+from core.providers.tmdb.view_models import TmdbMovieMetadata, TmdbTvMetadata
 from core.services.file_selection import select_files
-from core.services.run_artifacts import RunDirs, append_run_log, setup_run_dirs, write_manifest_record
-from tmdb.service import init_tmdb
+from core.writers.itunes_writer import write_itunes_metadata
+from core.services.logging import log_serialized_metadata
+from core.services.run_artifacts import (
+    RunDirs,
+    append_run_log,
+    setup_run_dirs,
+    write_log_summary,
+    write_manifest_record,
+)
+from core.providers.tmdb.service import init_tmdb
 from core.services.write_pipeline import filter_existing_tags, has_sufficient_backup_space
 from ffmpeg.backups import backup_metadata_path, backup_original_path, ffmpeg_backup_metadata, ffmpeg_restore_metadata
 import ffmpeg.inspect as inspect_module
 from ffmpeg.inspect import MediaInspector, resolve_ffprobe_path
-from ffmpeg.atomicparsley import atomicparsley_write_metadata
+from core.writers.mutagen_itunmovi import write_standard_director
 from ffmpeg.writer import ResourceBusyError, ffmpeg_write_metadata
-from file_io.scanner import normalize_extensions
+from core.files.scanner import normalize_extensions
 from logger import get_logger
-from tmdb.helpers import download_cover_art
-from tmdb.client import (
+from core.providers.tmdb.helpers import download_cover_art
+from core.providers.tmdb.client import (
     choose_preferred_match,
     tmdb_movie_details,
     tmdb_search_best_match_with_candidates,
     tmdb_search_best_match_with_candidates_scored,
-    tmdb_search_best_tv_match_with_candidates,
     tmdb_search_best_tv_match_with_candidates_scored,
     tmdb_tv_details,
 )
-from tmdb.service import build_cover_url
+from core.providers.tmdb.service import build_cover_url
 
 log = get_logger()
 
@@ -57,10 +64,11 @@ class RunContext:
     backup_original: bool
     backup_suffix: str
     backup_dir: Path
+    max_logs: int
     cover_art_enabled: bool
     cover_art_size: str
     ffmpeg_path: str
-    atomicparsley_path: str
+    mp4tags_path: str
     metadata_tool: str
     rdns_namespace: str
     ffmpeg_analyzeduration: str | int | None
@@ -73,6 +81,8 @@ class RunContext:
     ffprobe_path: str
     inspector: MediaInspector
     tmdb_ctx: object
+    movie_tagging_plan: Dict[str, object] | None
+    tv_tagging_plan: Dict[str, object] | None
 
 
 @dataclass
@@ -106,6 +116,29 @@ def resolve_test_mode(options: RunOptions, cfg: Config) -> str | None:
     return cfg.write.test_mode
 
 
+def _clear_tags_for_media(media_type: str) -> list[str]:
+    """Return metadata keys to clear for the given media type."""
+    deprecated = ["longdesc"]
+    music_only = ["artist", "album_artist", "album", "track", "disc", "composer"]
+    tv_only = ["show", "season_number", "episode_id", "episode_sort"]
+    movie_only = [
+        "year",
+        "comment",
+        "keywords",
+        "director",
+        "producer",
+        "screenwriter",
+        "studio",
+        "grouping",
+        "copyright",
+        "hd_video",
+    ]
+    if media_type == "tv":
+        return deprecated + music_only + movie_only
+    return deprecated + music_only + tv_only
+
+
+
 def prepare_run_context(options: RunOptions, cfg: Config) -> RunContext | None:
     """Resolve configuration and helpers for a run."""
     exts = normalize_extensions(cfg.scan.extensions)
@@ -121,10 +154,11 @@ def prepare_run_context(options: RunOptions, cfg: Config) -> RunContext | None:
     backup_original = bool(write_cfg.backup_original)
     backup_suffix = str(write_cfg.backup_suffix)
     backup_dir = Path(write_cfg.backup_dir).expanduser()
+    max_logs = int(write_cfg.max_logs or 20)
     cover_art_enabled = bool(write_cfg.cover_art_enabled)
     cover_art_size = str(write_cfg.cover_art_size)
     ffmpeg_path = str(write_cfg.ffmpeg_path)
-    atomicparsley_path = str(write_cfg.atomicparsley_path)
+    mp4tags_path = str(write_cfg.mp4tags_path)
     metadata_tool = str(write_cfg.metadata_tool or "ffmpeg").lower()
     rdns_namespace = str(write_cfg.rdns_namespace or "local.tmdb")
     ffmpeg_analyzeduration = write_cfg.ffmpeg_analyzeduration
@@ -161,6 +195,8 @@ def prepare_run_context(options: RunOptions, cfg: Config) -> RunContext | None:
 
     ffprobe_path = resolve_ffprobe_path(ffmpeg_path)
     inspector = MediaInspector(ffprobe_path)
+    movie_tagging_plan = load_movie_plan()
+    tv_tagging_plan = load_tv_plan()
 
     return RunContext(
         cfg=cfg,
@@ -174,10 +210,11 @@ def prepare_run_context(options: RunOptions, cfg: Config) -> RunContext | None:
         backup_original=backup_original,
         backup_suffix=backup_suffix,
         backup_dir=backup_dir,
+        max_logs=max_logs,
         cover_art_enabled=tmdb_ctx.cover_art_enabled,
         cover_art_size=cover_art_size,
         ffmpeg_path=ffmpeg_path,
-        atomicparsley_path=atomicparsley_path,
+        mp4tags_path=mp4tags_path,
         metadata_tool=metadata_tool,
         rdns_namespace=rdns_namespace,
         ffmpeg_analyzeduration=ffmpeg_analyzeduration,
@@ -190,6 +227,8 @@ def prepare_run_context(options: RunOptions, cfg: Config) -> RunContext | None:
         ffprobe_path=ffprobe_path,
         inspector=inspector,
         tmdb_ctx=tmdb_ctx,
+        movie_tagging_plan=movie_tagging_plan,
+        tv_tagging_plan=tv_tagging_plan,
     )
 
 
@@ -241,6 +280,9 @@ def process_one_file(
             )
         return ProcessResult(status="failed")
 
+    def log_skip(reason: str) -> None:
+        append_run_log(run_dirs.run_log_path, f"[skip] {path}\nreason: {reason}\n")
+
     stem = path.stem
     title_guess, year_guess = clean_filename_for_search(stem, ctx.strip_tokens)
     if not ctx.prefer_year:
@@ -256,6 +298,7 @@ def process_one_file(
 
         if not ctx.write_enabled:
             log.info("  Write disabled; skipping extras update.")
+            log_skip("extras_write_disabled")
             if run_dirs.run_manifest_path:
                 write_manifest_record(
                     run_dirs.run_manifest_path,
@@ -284,39 +327,24 @@ def process_one_file(
             if backup_path:
                 log.info(f"  Backup: metadata saved to {backup_path}")
 
-        if ctx.metadata_tool == "atomicparsley":
-            wrote = atomicparsley_write_metadata(
-                atomicparsley_path=ctx.atomicparsley_path,
-                input_path=path,
-                tags=tags_to_write,
-                cover_art_path=None,
-                remove_existing_artwork=True,
-                rdns_namespace=ctx.rdns_namespace,
-                log_path=run_dirs.run_log_path,
-                backup_original=ctx.backup_original,
-                backup_path=backup_original_path(run_dirs.run_backup_dir, path, options.root, ctx.backup_suffix),
-                backup_suffix=ctx.backup_suffix,
-                atomic_replace=ctx.atomic_replace,
-                dry_run=ctx.dry_run,
-                test_mode=ctx.test_mode,
-            )
-        else:
-            log.info("  ⚠️ ffmpeg writer cannot remove existing artwork; continuing with title update.")
-            wrote = ffmpeg_write_metadata(
-                ffmpeg_path=ctx.ffmpeg_path,
-                input_path=path,
-                tags=tags_to_write,
-                cover_art_path=None,
-                ffmpeg_analyzeduration=ctx.ffmpeg_analyzeduration,
-                ffmpeg_probe_size=ctx.ffmpeg_probe_size,
-                log_path=run_dirs.run_log_path,
-                backup_original=ctx.backup_original,
-                backup_path=backup_original_path(run_dirs.run_backup_dir, path, options.root, ctx.backup_suffix),
-                backup_suffix=ctx.backup_suffix,
-                atomic_replace=ctx.atomic_replace,
-                dry_run=ctx.dry_run,
-                test_mode=ctx.test_mode,
-            )
+        log.info("  ⚠️ ffmpeg writer cannot remove existing artwork; continuing with title update.")
+        wrote = ffmpeg_write_metadata(
+            ffmpeg_path=ctx.ffmpeg_path,
+            input_path=path,
+            tags=tags_to_write,
+            cover_art_path=None,
+            ffmpeg_analyzeduration=ctx.ffmpeg_analyzeduration,
+            ffmpeg_probe_size=ctx.ffmpeg_probe_size,
+            log_path=run_dirs.run_log_path,
+            clear_metadata=False,
+            clear_tags=None,
+            backup_original=ctx.backup_original,
+            backup_path=backup_original_path(run_dirs.run_backup_dir, path, options.root, ctx.backup_suffix),
+            backup_suffix=ctx.backup_suffix,
+            atomic_replace=ctx.atomic_replace,
+            dry_run=ctx.dry_run,
+            test_mode=ctx.test_mode,
+        )
 
         if wrote:
             log.info("  ✅ Updated extras metadata")
@@ -388,7 +416,7 @@ def process_one_file(
             try:
                 if ctx.inspector.has_drm_stream(path):
                     log.info("  DRM-protected media detected (skipping).")
-                    append_run_log(run_dirs.run_log_path, f"[drm] {path}\n")
+                    log_skip("drm_protected")
                     if run_dirs.run_manifest_path:
                         write_manifest_record(
                             run_dirs.run_manifest_path,
@@ -407,7 +435,36 @@ def process_one_file(
                 log.info(f"  ⚠️ Could not inspect DRM status: {exc}")
 
         candidates = build_search_candidates(title_guess)
-        if ctx.cfg.tmdb.allow_tv_fallback:
+        forced_media = str(options.media_type or "").lower().strip() or None
+        if forced_media == "movie":
+            movie_candidate = tmdb_search_best_match_with_candidates_scored(
+                session=ctx.tmdb_ctx.session,
+                api_key=ctx.tmdb_ctx.api_key,
+                titles=candidates,
+                year=year_guess,
+                language=ctx.tmdb_ctx.language,
+                include_adult=ctx.tmdb_ctx.include_adult,
+                min_score=ctx.tmdb_ctx.min_score,
+                fallback_min_score=ctx.cfg.tmdb.fallback_min_score,
+                fallback_min_votes=ctx.cfg.tmdb.fallback_min_votes,
+            )
+            best = movie_candidate.result if movie_candidate else None
+            media_type = "movie"
+        elif forced_media == "tv":
+            tv_candidate = tmdb_search_best_tv_match_with_candidates_scored(
+                session=ctx.tmdb_ctx.session,
+                api_key=ctx.tmdb_ctx.api_key,
+                titles=candidates,
+                year=year_guess,
+                language=ctx.tmdb_ctx.language,
+                include_adult=ctx.tmdb_ctx.include_adult,
+                min_score=ctx.tmdb_ctx.min_score,
+                fallback_min_score=ctx.cfg.tmdb.fallback_min_score,
+                fallback_min_votes=ctx.cfg.tmdb.fallback_min_votes,
+            )
+            best = tv_candidate.result if tv_candidate else None
+            media_type = "tv"
+        elif ctx.cfg.tmdb.allow_tv_fallback:
             movie_candidate = tmdb_search_best_match_with_candidates_scored(
                 session=ctx.tmdb_ctx.session,
                 api_key=ctx.tmdb_ctx.api_key,
@@ -450,6 +507,7 @@ def process_one_file(
 
         if not best:
             log.info("  TMDb: no confident match found (skipping).")
+            log_skip("no_match")
             if run_dirs.run_manifest_path:
                 write_manifest_record(
                     run_dirs.run_manifest_path,
@@ -472,30 +530,108 @@ def process_one_file(
             details = tmdb_movie_details(ctx.tmdb_ctx.session, ctx.tmdb_ctx.api_key, movie_id, ctx.tmdb_ctx.language)
         time.sleep(ctx.tmdb_ctx.delay)
 
-        if media_type == "tv" and ctx.cfg.serialization_tv.mappings:
-            serialization_cfg = ctx.cfg.serialization_tv
-        else:
-            serialization_cfg = ctx.cfg.serialization
-
+        max_overview_length = 500
         if media_type == "tv":
-            metadata = TvMetadata.from_tmdb(details, serialization_cfg.max_overview_length)
+            metadata = TmdbTvMetadata.from_tmdb(details, max_overview_length)
         else:
-            metadata = MovieMetadata.from_tmdb(details, serialization_cfg.max_overview_length)
-        ctx_map = metadata.to_context()
+            metadata = TmdbMovieMetadata.from_tmdb(details, max_overview_length)
         if not ctx.full_log:
             label = "Show" if media_type == "tv" else "Movie"
             log.info(f"  {label}: {metadata.title} ({metadata.release_year})")
         else:
             prefix = "TMDb TV" if media_type == "tv" else "TMDb"
             log.info(f"  {prefix}: matched '{metadata.title}' ({metadata.release_year}) id={metadata.tmdb_id}")
-        tags_to_write: Dict[str, str] = {}
-        for ffkey, template in serialization_cfg.mappings.items():
-            val = render_tag_value(str(template), ctx_map)
-            if val:
-                tags_to_write[str(ffkey)] = val
+        tags_to_write: Dict[str, object] = {}
+        cover_art_path = None
+        parsed_tv = transforms.parse_tv_from_filename(path) if media_type == "tv" else None
+        plan_selection = select_plan(media_type, ctx.movie_tagging_plan, ctx.tv_tagging_plan)
+        use_plan = plan_selection.plan is not None
 
-        if not tags_to_write:
+        if media_type == "tv" and ctx.tv_tagging_plan is not None and parsed_tv is None:
+            log.info("  ⚠️ TV plan enabled but season/episode not found in filename; using defaults.")
+
+        itunes_tags: Dict[str, object] = {}
+        if use_plan:
+            allow_artwork_download = ctx.cover_art_enabled
+            if allow_artwork_download and not ctx.override_existing:
+                try:
+                    if ctx.inspector.has_attached_picture(path):
+                        log.info("  Cover art already present; skipping download (use --override-existing to replace)")
+                        allow_artwork_download = False
+                except Exception as exc:
+                    log.info(f"  ⚠️ Could not inspect existing artwork: {exc}")
+            ffmpeg_result = apply_plan_for_file(
+                plan_selection=plan_selection,
+                content_id=int(metadata.tmdb_id or 0),
+                language=ctx.tmdb_ctx.language,
+                include_adult=ctx.tmdb_ctx.include_adult,
+                session=ctx.tmdb_ctx.session,
+                api_key=ctx.tmdb_ctx.api_key,
+                request_delay=ctx.tmdb_ctx.delay,
+                tv_season=parsed_tv.season if parsed_tv else None,
+                tv_episode=parsed_tv.episode if parsed_tv else None,
+                image_base_url=ctx.tmdb_ctx.image_base_url,
+                poster_sizes=list(ctx.tmdb_ctx.poster_sizes),
+                cover_art_size=ctx.cover_art_size,
+                run_dir=run_dirs.run_backup_dir,
+                inspector=ctx.inspector,
+                input_path=path,
+                dry_run=ctx.dry_run or not ctx.write_enabled,
+                test_mode=ctx.test_mode,
+                allow_artwork_download=allow_artwork_download,
+                metadata_tool=ctx.metadata_tool,
+                provider=ctx.tmdb_ctx.provider,
+                allowed_writers={"ffmpeg", "either"},
+                details=details,
+            )
+            if ffmpeg_result:
+                tags_to_write = ffmpeg_result.tags
+            itunmovi_source_tags = dict(tags_to_write)
+            if "studio" in tags_to_write:
+                tags_to_write.pop("studio", None)
+            if "cast" in tags_to_write:
+                tags_to_write.pop("cast", None)
+            if ctx.cover_art_enabled:
+                cover_art_path = ffmpeg_result.cover_art_path if ffmpeg_result else None
+
+            itunes_result = apply_plan_for_file(
+                plan_selection=plan_selection,
+                content_id=int(metadata.tmdb_id or 0),
+                language=ctx.tmdb_ctx.language,
+                include_adult=ctx.tmdb_ctx.include_adult,
+                session=ctx.tmdb_ctx.session,
+                api_key=ctx.tmdb_ctx.api_key,
+                request_delay=ctx.tmdb_ctx.delay,
+                tv_season=parsed_tv.season if parsed_tv else None,
+                tv_episode=parsed_tv.episode if parsed_tv else None,
+                image_base_url=ctx.tmdb_ctx.image_base_url,
+                poster_sizes=list(ctx.tmdb_ctx.poster_sizes),
+                cover_art_size=ctx.cover_art_size,
+                run_dir=run_dirs.run_backup_dir,
+                inspector=ctx.inspector,
+                input_path=path,
+                dry_run=ctx.dry_run or not ctx.write_enabled,
+                test_mode=ctx.test_mode,
+                allow_artwork_download=allow_artwork_download,
+                metadata_tool=ctx.metadata_tool,
+                provider=ctx.tmdb_ctx.provider,
+                allowed_writers={"mp4tags", "either"},
+                details=details,
+            )
+            if itunes_result:
+                itunes_tags = itunes_result.tags
+            itunmovi_payload = None
+            if itunmovi_source_tags:
+                itunmovi_payload = transforms.build_itunmovi_payload(itunmovi_source_tags)
+                if itunmovi_payload and "iTunMOVI" not in itunes_tags:
+                    itunes_tags["iTunMOVI"] = transforms.build_itunmovi_atom(itunmovi_source_tags)
+            # prefer serialized metadata logging later in the pipeline
+        else:
+            log.info("  No mapping plan available for this file (skipping).")
+
+        if not tags_to_write and not itunes_tags:
             log.info("  No tags produced from config mappings (skipping write).")
+            log_skip("no_tags")
             if run_dirs.run_manifest_path:
                 write_manifest_record(
                     run_dirs.run_manifest_path,
@@ -511,7 +647,7 @@ def process_one_file(
                 )
             return ProcessResult(status="skipped")
 
-        if not ctx.override_existing:
+        if not ctx.override_existing and tags_to_write:
             existing_tags: Dict[str, str] = {}
             try:
                 existing_tags = ctx.inspector.read_format_tags(path)
@@ -521,8 +657,9 @@ def process_one_file(
                 tags_to_write, skipped = filter_existing_tags(tags_to_write, existing_tags)
                 if skipped:
                     log.info(f"  Skipping existing tags: {', '.join(skipped)}")
-                if not tags_to_write:
+                if not tags_to_write and not itunes_tags:
                     log.info("  All configured tags already exist (skipping write).")
+                    log_skip("existing_tags")
                     if run_dirs.run_manifest_path:
                         write_manifest_record(
                             run_dirs.run_manifest_path,
@@ -538,18 +675,24 @@ def process_one_file(
                         )
                     return ProcessResult(status="skipped")
 
-        if ctx.full_log:
-            log.info("  Serialized metadata:")
-            for k, v in tags_to_write.items():
-                preview = v if len(v) <= 120 else (v[:117] + "...")
-                log.info(f"    - {k}: {preview}")
+        if ctx.full_log and (tags_to_write or itunes_tags):
+            combined_tags: Dict[str, object] = {}
+            for key, value in tags_to_write.items():
+                combined_tags[key] = value
+            for key, value in itunes_tags.items():
+                if key not in combined_tags:
+                    combined_tags[key] = value
+            log_serialized_metadata(combined_tags, label="  Serialized metadata:")
+            log_serialized_metadata(
+                itunes_tags,
+                label="  Serialized metadata (iTunes-specific):",
+            )
             if ctx.test_mode_setting == "verbose":
                 log.info("  TMDb metadata:")
                 log.info(json.dumps(details, indent=2, sort_keys=True))
 
-        cover_art_path = None
         cover_url = ""
-        if ctx.cover_art_enabled:
+        if ctx.cover_art_enabled and not use_plan:
             poster_path = str(details.get("poster_path") or "")
             cover_url = build_cover_url(ctx.tmdb_ctx, poster_path, ctx.cover_art_size)
             if ctx.full_log:
@@ -563,10 +706,7 @@ def process_one_file(
                 required_bytes = stat.st_size if stat else 0
                 if required_bytes and not has_sufficient_backup_space(run_dirs.run_backup_dir, required_bytes):
                     log.info("  ❌ Not enough space for backup (skipping).")
-                    append_run_log(
-                        run_dirs.run_log_path,
-                        f"[backup] {path}\nerror: insufficient space for backup\n",
-                    )
+                    log_skip("insufficient_backup_space")
                     if run_dirs.run_manifest_path:
                         write_manifest_record(
                             run_dirs.run_manifest_path,
@@ -622,23 +762,8 @@ def process_one_file(
                 )
                 if backup_path:
                     log.info(f"  Backup: metadata saved to {backup_path}")
-            if ctx.metadata_tool == "atomicparsley":
-                wrote = atomicparsley_write_metadata(
-                    atomicparsley_path=ctx.atomicparsley_path,
-                    input_path=path,
-                    tags=tags_to_write,
-                    cover_art_path=cover_art_path,
-                    remove_existing_artwork=ctx.override_existing,
-                    rdns_namespace=ctx.rdns_namespace,
-                    log_path=run_dirs.run_log_path,
-                    backup_original=ctx.backup_original,
-                    backup_path=original_backup_path,
-                    backup_suffix=ctx.backup_suffix,
-                    atomic_replace=ctx.atomic_replace,
-                    dry_run=ctx.dry_run,
-                    test_mode=ctx.test_mode,
-                )
-            else:
+            wrote = True
+            if tags_to_write or cover_art_path:
                 wrote = ffmpeg_write_metadata(
                     ffmpeg_path=ctx.ffmpeg_path,
                     input_path=path,
@@ -647,6 +772,8 @@ def process_one_file(
                     ffmpeg_analyzeduration=ctx.ffmpeg_analyzeduration,
                     ffmpeg_probe_size=ctx.ffmpeg_probe_size,
                     log_path=run_dirs.run_log_path,
+                    clear_metadata=ctx.override_existing,
+                    clear_tags=_clear_tags_for_media(media_type),
                     backup_original=ctx.backup_original,
                     backup_path=original_backup_path,
                     backup_suffix=ctx.backup_suffix,
@@ -654,8 +781,41 @@ def process_one_file(
                     dry_run=ctx.dry_run,
                     test_mode=ctx.test_mode,
                 )
-            if cover_art_path:
-                cover_art_path.unlink(missing_ok=True)
+            if "director" in tags_to_write:
+                wrote = (
+                    wrote
+                    and write_standard_director(
+                        input_path=path,
+                        director=tags_to_write.get("director"),
+                        log_path=run_dirs.run_log_path,
+                        dry_run=ctx.dry_run,
+                        test_mode=ctx.test_mode,
+                    )
+                )
+
+            if itunes_tags:
+                clear_itunes = bool(ctx.override_existing and not tags_to_write)
+                if ctx.metadata_tool != "mp4tags":
+                    log.info("  ⚠️ mp4tags is required for iTunes-specific metadata; update metadata_tool to mp4tags.")
+                wrote = (
+                    wrote
+                    and write_itunes_metadata(
+                        mp4tags_path=ctx.mp4tags_path,
+                        input_path=path,
+                        tags=itunes_tags,
+                        itunmovi_payload=itunmovi_payload,
+                        log_path=run_dirs.run_log_path,
+                        clear_metadata=clear_itunes,
+                        run_dir=run_dirs.run_backup_dir,
+                        dry_run=ctx.dry_run,
+                        test_mode=ctx.test_mode,
+                    )
+                )
+            if not tags_to_write and not itunes_tags and not cover_art_path:
+                wrote = False
+            if not itunes_tags and ctx.metadata_tool == "mp4tags":
+                # No iTunes-only tags; nothing else to do.
+                pass
             if wrote:
                 log.info("  ✅ Updated metadata")
                 if (
@@ -840,9 +1000,20 @@ def run(options: RunOptions, cfg: Config) -> int:
     if not ctx.write_enabled:
         log.info("NOTE: write.enabled is false; will only fetch & print metadata.\n")
 
-    run_dirs = setup_run_dirs(options.restore_backup, ctx.backup_dir, ctx.test_mode)
+    run_dirs = setup_run_dirs(
+        options.restore_backup,
+        ctx.backup_dir,
+        ctx.test_mode,
+        ctx.max_logs,
+    )
     if run_dirs is None:
         return 2
 
     summary = run_files(files, options, ctx, run_dirs)
+    notes: list[str] = []
+    if ctx.dry_run:
+        notes.append("dry_run=true — no files were modified")
+    if ctx.test_mode:
+        notes.append(f"test_mode={ctx.test_mode_setting} — no files were modified")
+    write_log_summary(run_dirs.run_log_path, summary.ok_count, summary.skip_count, summary.fail_count, notes)
     return finalize_run(summary, ctx)

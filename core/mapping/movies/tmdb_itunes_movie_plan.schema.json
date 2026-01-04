@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/tmdb-itunes-movie-tagging-plan.schema.json",
+  "title": "TMDb \u2192 iTunes Movie Tagging Plan",
+  "type": "object",
+  "required": ["version", "targets", "rules"],
+  "properties": {
+    "version": { "type": "string" },
+    "targets": {
+      "type": "object",
+      "description": "Where/how tags will be written (ffmpeg keys, mp4tags flags).",
+      "required": ["ffmpeg", "mp4tags"],
+      "properties": {
+        "ffmpeg": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string", "default": "ffmpeg" },
+            "movflags_use_metadata_tags": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to include -movflags use_metadata_tags for MP4."
+            }
+          },
+          "additionalProperties": false
+        },
+        "mp4tags": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string", "default": "mp4tags" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["itunes_key", "tmdb_sources"],
+      "properties": {
+        "itunes_key": {
+          "type": "string",
+          "description": "An iTunes/MP4 target tag key (ffmpeg key) OR an mp4tags flag name.",
+          "examples": [
+            "title",
+            "year",
+            "description",
+            "synopsis",
+            "genre",
+            "comment",
+            "grouping",
+            "keywords",
+            "media_type",
+            "artwork"
+          ]
+        },
+        "writer": {
+          "type": "string",
+          "enum": ["ffmpeg", "mp4tags", "either"],
+          "default": "either"
+        },
+        "tmdb_sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/tmdbSource" }
+        },
+        "transform": {
+          "type": "string",
+          "description": "Name of a transform function your code implements (e.g., year_from_date, apple_genre_map, join_names, truncate)."
+        },
+        "params": { "type": "object" },
+        "fallback": { "type": ["string", "number", "boolean", "null"] },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "tmdbSource": {
+      "type": "object",
+      "required": ["endpoint", "jsonpath"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "Which TMDb endpoint provides the field (e.g., /movie/{id}, /movie/{id}/credits, /movie/{id}/keywords, /movie/{id}/release_dates)."
+        },
+        "jsonpath": {
+          "type": "string",
+          "description": "JSONPath (or equivalent) into the returned payload."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

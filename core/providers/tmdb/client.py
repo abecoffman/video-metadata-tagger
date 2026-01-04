@@ -71,51 +71,6 @@ def title_similarity(left: str, right: str) -> float:
     return fuzz.QRatio(normalize_title(left), normalize_title(right)) / 100.0
 
 
-def tmdb_search_best_match(
-    session: requests.Session,
-    api_key: str,
-    title: str,
-    year: int | None,
-    language: str,
-    include_adult: bool,
-    min_score: float,
-) -> Dict[str, Any] | None:
-    """Find the best TMDb match for a title.
-
-    Args:
-        session: Requests session.
-        api_key: TMDb API key.
-        title: Movie title to search.
-        year: Optional release year.
-        language: Language code.
-        include_adult: Whether to include adult titles.
-        min_score: Minimum similarity score threshold.
-
-    Returns:
-        Best matching result dict, or None if below threshold.
-    """
-    if not title:
-        return None
-
-    params: Dict[str, Any] = {"query": title, "language": language, "include_adult": include_adult}
-    if year:
-        params["year"] = year
-
-    data = tmdb_request(session, api_key, "/search/movie", params)
-    results = data.get("results", []) or []
-    if not results:
-        return None
-
-    def score(r: Dict[str, Any]) -> float:
-        result_title = str(r.get("title") or r.get("original_title") or "")
-        return title_similarity(title, result_title) * 10.0
-
-    best = max(results, key=score)
-    if score(best) < min_score:
-        return None
-    return best
-
-
 def tmdb_search_best_match_with_candidates(
     session: requests.Session,
     api_key: str,
@@ -239,34 +194,6 @@ def tmdb_search_best_match_with_candidates_scored(
         year_param="year",
         media_type="movie",
     )
-
-
-def tmdb_search_best_tv_match_with_candidates(
-    session: requests.Session,
-    api_key: str,
-    titles: Iterable[str],
-    year: int | None,
-    language: str,
-    include_adult: bool,
-    min_score: float,
-    fallback_min_score: float,
-    fallback_min_votes: int,
-) -> Dict[str, Any] | None:
-    """Find the best TMDb TV match for any of the candidate titles."""
-    candidate = tmdb_search_best_tv_match_with_candidates_scored(
-        session=session,
-        api_key=api_key,
-        titles=titles,
-        year=year,
-        language=language,
-        include_adult=include_adult,
-        min_score=min_score,
-        fallback_min_score=fallback_min_score,
-        fallback_min_votes=fallback_min_votes,
-    )
-    if not candidate:
-        return None
-    return candidate.result
 
 
 def tmdb_search_best_tv_match_with_candidates_scored(

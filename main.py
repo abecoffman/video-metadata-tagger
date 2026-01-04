@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from cli import parse_cli
 from config import load_config
-from core.inspect import inspect as inspect_files
+from core.metadata_inspect import inspect as inspect_files
 from core.run import run
 
 

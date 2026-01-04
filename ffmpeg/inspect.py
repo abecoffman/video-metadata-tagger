@@ -147,3 +147,17 @@ class MediaInspector:
             if codec_name in {"drmi", "drms"} or codec_tag in {"drmi", "drms"}:
                 return True
         return False
+
+    def get_video_dimensions(self, input_path: Path) -> tuple[int | None, int | None]:
+        """Return width/height for the first video stream, if available."""
+        streams = self._load_streams(input_path)
+        for stream in streams:
+            if str(stream.get("codec_type") or "") != "video":
+                continue
+            width = stream.get("width")
+            height = stream.get("height")
+            try:
+                return (int(width), int(height))
+            except Exception:
+                return (None, None)
+        return (None, None)

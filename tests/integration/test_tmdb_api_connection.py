@@ -3,7 +3,7 @@ import os
 import pytest
 import requests
 
-from tmdb.client import tmdb_request
+from core.providers.tmdb.client import tmdb_request
 
 
 @pytest.mark.integration

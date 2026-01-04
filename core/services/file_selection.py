@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.services.run_artifacts import load_failed_from_manifest, manifest_path_for_rerun
-from file_io.scanner import find_movie_files
+from core.files.scanner import find_movie_files
 
 
 def select_files(

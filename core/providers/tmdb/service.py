@@ -10,8 +10,9 @@ import requests
 
 from config import Config
 from logger import get_logger
-from tmdb import client as tmdb_client
-from tmdb.helpers import build_image_url, select_image_size
+from core.providers.tmdb import client as tmdb_client
+from core.providers.tmdb.adapter import TmdbMappingProvider
+from core.providers.tmdb.helpers import build_image_url, select_image_size
 
 log = get_logger()
 
@@ -28,6 +29,7 @@ class TmdbContext:
     image_base_url: str
     poster_sizes: list[str]
     cover_art_enabled: bool
+    provider: TmdbMappingProvider
 
 
 def init_tmdb(
@@ -50,6 +52,7 @@ def init_tmdb(
                 image_base_url="",
                 poster_sizes=[],
                 cover_art_enabled=cover_art_enabled,
+                provider=TmdbMappingProvider(),
             ),
             None,
         )
@@ -68,6 +71,7 @@ def init_tmdb(
                 image_base_url="",
                 poster_sizes=[],
                 cover_art_enabled=cover_art_enabled,
+                provider=TmdbMappingProvider(),
             ),
             f"TMDb API key missing. Set env var {api_key_env} or add tmdb.api_key to config.",
         )
@@ -100,6 +104,7 @@ def init_tmdb(
             image_base_url=image_base_url,
             poster_sizes=poster_sizes,
             cover_art_enabled=cover_art_enabled,
+            provider=TmdbMappingProvider(),
         ),
         None,
     )

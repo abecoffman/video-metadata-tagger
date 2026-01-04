@@ -8,6 +8,8 @@ from typing import Dict, Iterable, List
 import re
 
 from config import Config
+from core.mapping_engine import load_plan
+from core.mapping import MOVIE_PLAN_PATH, TV_PLAN_PATH
 from ffmpeg.backups import create_run_backup_dir
 from ffmpeg.inspect import MediaInspector, resolve_ffprobe_path
 from core.services.file_selection import select_files
@@ -116,6 +118,23 @@ def _resolve_log_path(log_path: Path | None, cfg: Config) -> Path:
     return run_dir / "inspect.log"
 
 
+def _load_required_keys() -> list[str]:
+    required: list[str] = []
+    for plan_path in (MOVIE_PLAN_PATH, TV_PLAN_PATH):
+        if not plan_path.exists():
+            continue
+        try:
+            plan = load_plan(plan_path)
+        except Exception as exc:
+            log.info(f"  ⚠️ Could not load tagging plan {plan_path}: {exc}")
+            continue
+        for rule in plan.get("rules", []):
+            key = str(rule.get("itunes_key") or "").strip()
+            if key:
+                required.append(key)
+    return sorted({key.lower() for key in required})
+
+
 def inspect(root: Path, file_path: Path | None, cfg: Config, only_exts: list[str], log_path: Path | None) -> InspectReport:
     """Inspect files for missing metadata and write a log report."""
     exts = only_exts or cfg.scan.extensions
@@ -132,9 +151,7 @@ def inspect(root: Path, file_path: Path | None, cfg: Config, only_exts: list[str
         return InspectReport(total_files=0, files_with_missing=0, total_missing_fields=0)
     log.info(f"Found {len(files)} file(s).")
     log_file = _resolve_log_path(log_path, cfg)
-    required = list(cfg.serialization.mappings.keys())
-    if cfg.serialization_tv.mappings:
-        required += list(cfg.serialization_tv.mappings.keys())
+    required = _load_required_keys()
     ffprobe_path = resolve_ffprobe_path(cfg.write.ffmpeg_path)
     inspector = MediaInspector(ffprobe_path)
     check_artwork = cfg.write.cover_art_enabled
@@ -152,7 +169,9 @@ def inspect(root: Path, file_path: Path | None, cfg: Config, only_exts: list[str
                 missing = find_missing_tags(tags, required)
                 if check_artwork:
                     has_artwork = inspector.has_attached_picture(movie_path) or inspector.has_artwork_tag(movie_path)
-                    if not has_artwork and "artwork" not in missing:
+                    if has_artwork and "artwork" in missing:
+                        missing = [item for item in missing if item != "artwork"]
+                    elif not has_artwork and "artwork" not in missing:
                         missing.append("artwork")
             except Exception as exc:  # pragma: no cover - bubble up as log line
                 line = f"[ERROR] {movie_path} | {exc}"

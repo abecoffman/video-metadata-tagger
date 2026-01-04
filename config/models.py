@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import List
 
 
 @dataclass
@@ -46,26 +46,19 @@ class WriteConfig:
     dry_run: bool = False
     override_existing: bool = False
     backup_original: bool = False
-    backup_dir: str = "runs"
+    backup_dir: str = "logs"
+    max_logs: int = 20
     backup_suffix: str = ".bak"
     cover_art_enabled: bool = True
     cover_art_size: str = "w500"
     ffmpeg_path: str = "ffmpeg"
-    atomicparsley_path: str = "AtomicParsley"
-    metadata_tool: str = "atomicparsley"
+    mp4tags_path: str = "mp4tags"
+    metadata_tool: str = "mp4tags"
     rdns_namespace: str = "local.tmdb"
     ffmpeg_analyzeduration: str | int | None = None
     ffmpeg_probe_size: str | int | None = None
     atomic_replace: bool = True
     test_mode: str | None = None
-
-
-@dataclass
-class SerializationConfig:
-    """Serialization template configuration settings."""
-
-    mappings: Dict[str, str] = field(default_factory=dict)
-    max_overview_length: int = 500
 
 
 @dataclass
@@ -76,5 +69,3 @@ class Config:
     scan: ScanConfig
     matching: MatchingConfig
     write: WriteConfig
-    serialization: SerializationConfig
-    serialization_tv: SerializationConfig

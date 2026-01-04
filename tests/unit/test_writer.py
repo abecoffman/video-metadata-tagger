@@ -16,7 +16,7 @@ class _Proc:
 
 
 def test_create_run_backup_dir_uses_timestamp(tmp_path: Path) -> None:
-    base = tmp_path / "runs"
+    base = tmp_path / "logs"
     now = datetime(2024, 1, 2, 3, 4, 5)
     run_dir = create_run_backup_dir(base, now=now)
     assert run_dir.exists()
@@ -26,7 +26,7 @@ def test_create_run_backup_dir_uses_timestamp(tmp_path: Path) -> None:
 def test_backup_metadata_path_uses_relative_path(tmp_path: Path) -> None:
     root = tmp_path / "root"
     input_path = root / "movies" / "Top Gun (1986).m4v"
-    backup_dir = tmp_path / "runs" / "run"
+    backup_dir = tmp_path / "logs" / "run"
     expected = backup_dir / "movies__Top Gun (1986).m4v.ffmeta"
     assert backup_metadata_path(backup_dir, input_path, root) == expected
 
@@ -34,7 +34,7 @@ def test_backup_metadata_path_uses_relative_path(tmp_path: Path) -> None:
 def test_ffmpeg_backup_metadata_invokes_ffmpeg(tmp_path: Path, monkeypatch) -> None:
     input_path = tmp_path / "movie.m4v"
     input_path.write_text("data", encoding="utf-8")
-    backup_dir = tmp_path / "runs"
+    backup_dir = tmp_path / "logs"
     calls = []
 
     def fake_run(cmd, capture_output, text):
