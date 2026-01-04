@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from file_io.io_utils import prompt_path
+from core.files.io_utils import prompt_path
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -33,6 +33,7 @@ class RunOptions:
     only_exts: list[str]
     test_mode: str | None
     override_existing: bool
+    media_type: str | None
 
 
 @dataclass
@@ -63,6 +64,11 @@ def _parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--override-existing",
         action="store_true",
         help="Override existing metadata values when writing tags",
+    )
+    parser.add_argument(
+        "--media-type",
+        choices=["movie", "tv"],
+        help="Force TMDb media type selection for this run (movie or tv)",
     )
     parser.add_argument(
         "--test",
@@ -167,6 +173,7 @@ def get_run_options(argv: list[str] | None = None) -> RunOptions:
         only_exts=only_exts,
         test_mode=args.test,
         override_existing=bool(args.override_existing),
+        media_type=args.media_type,
     )
 
 

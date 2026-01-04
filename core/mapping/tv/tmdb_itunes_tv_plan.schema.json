@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/tmdb-itunes-tv-tagging-plan.schema.json",
+  "title": "TMDb → iTunes TV Tagging Plan",
+  "type": "object",
+  "required": ["version", "targets", "tv", "rules"],
+  "properties": {
+    "version": { "type": "string" },
+
+    "targets": {
+      "type": "object",
+      "required": ["ffmpeg", "mp4tags"],
+      "properties": {
+        "ffmpeg": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string", "default": "ffmpeg" },
+            "movflags_use_metadata_tags": { "type": "boolean", "default": true }
+          },
+          "additionalProperties": false
+        },
+        "mp4tags": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path": { "type": "string", "default": "mp4tags" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "tv": {
+      "type": "object",
+      "description": "Policies specific to TV tagging.",
+      "required": ["artwork_policy", "max_genres"],
+      "properties": {
+        "artwork_policy": {
+          "type": "string",
+          "enum": ["season_poster", "show_poster", "episode_still", "none"],
+          "default": "season_poster"
+        },
+        "max_genres": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "default": 2
+        },
+        "country_for_certification": {
+          "type": "string",
+          "default": "US",
+          "description": "Used if you later add content rating mapping."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["itunes_key", "writer", "tmdb_sources"],
+      "properties": {
+        "itunes_key": {
+          "type": "string",
+          "description": "Target tag key. For ffmpeg: metadata key. For mp4tags: a conceptual key your code maps to flags."
+        },
+        "writer": {
+          "type": "string",
+          "enum": ["ffmpeg", "mp4tags"]
+        },
+        "tmdb_sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tmdbSource" }
+        },
+        "transform": { "type": "string" },
+        "params": { "type": "object" },
+        "fallback": { "type": ["string", "number", "boolean", "null"] },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "tmdbSource": {
+      "type": "object",
+      "required": ["endpoint", "jsonpath"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "TMDb endpoint name, e.g. /tv/{id}, /tv/{id}/season/{s}/episode/{e}."
+        },
+        "jsonpath": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

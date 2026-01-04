@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import core.inspect as inspect_module
+import core.metadata_inspect as inspect_module
 from config import config_from_dict
 
 
@@ -8,8 +8,7 @@ def _build_config() -> object:
     return config_from_dict(
         {
             "scan": {"extensions": [".m4v"]},
-            "serialization": {"mappings": {"title": "{title}", "genre": "{genres_joined}"}},
-            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "runs"},
+            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "logs"},
         }
     )
 
@@ -52,8 +51,7 @@ def test_inspect_reports_missing_artwork(tmp_path: Path, monkeypatch) -> None:
     cfg = config_from_dict(
         {
             "scan": {"extensions": [".m4v"]},
-            "serialization": {"mappings": {"title": "{title}"}},
-            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "runs", "cover_art_enabled": True},
+            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "logs", "cover_art_enabled": True},
         }
     )
 
@@ -84,8 +82,7 @@ def test_inspect_detects_covr_artwork(tmp_path: Path, monkeypatch) -> None:
     cfg = config_from_dict(
         {
             "scan": {"extensions": [".m4v"]},
-            "serialization": {"mappings": {"title": "{title}"}},
-            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "runs", "cover_art_enabled": True},
+            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "logs", "cover_art_enabled": True},
         }
     )
 
@@ -105,7 +102,8 @@ def test_inspect_detects_covr_artwork(tmp_path: Path, monkeypatch) -> None:
     )
 
     contents = log_path.read_text(encoding="utf-8")
-    assert "[OK]" in contents
+    assert "[MISSING]" in contents
+    assert "artwork" not in contents
 
 
 def test_inspect_accepts_rdns_tags(tmp_path: Path, monkeypatch) -> None:
@@ -115,10 +113,9 @@ def test_inspect_accepts_rdns_tags(tmp_path: Path, monkeypatch) -> None:
     cfg = config_from_dict(
         {
             "scan": {"extensions": [".m4v"]},
-            "serialization": {"mappings": {"tmdb_id": "{tmdb_id}"}},
             "write": {
                 "ffmpeg_path": "ffmpeg",
-                "backup_dir": "runs",
+                "backup_dir": "logs",
                 "rdns_namespace": "local.tmdb",
                 "cover_art_enabled": False,
             },
@@ -126,7 +123,7 @@ def test_inspect_accepts_rdns_tags(tmp_path: Path, monkeypatch) -> None:
     )
 
     def fake_read_format_tags(self, _input_path: Path) -> dict:
-        return {"----:com.apple.iTunes:local.tmdb:tmdb_id": "1271"}
+        return {"----:com.apple.iTunes:local.tmdb:keywords": "thriller, courtroom"}
 
     monkeypatch.setattr(inspect_module.MediaInspector, "read_format_tags", fake_read_format_tags)
 
@@ -139,8 +136,8 @@ def test_inspect_accepts_rdns_tags(tmp_path: Path, monkeypatch) -> None:
     )
 
     contents = log_path.read_text(encoding="utf-8")
-    assert "[OK]" in contents
-    assert "rDNS: tmdb_id" in contents
+    assert "[MISSING]" in contents
+    assert "rDNS: keywords" in contents
 
 
 def test_inspect_normalizes_itunes_year(tmp_path: Path, monkeypatch) -> None:
@@ -150,8 +147,7 @@ def test_inspect_normalizes_itunes_year(tmp_path: Path, monkeypatch) -> None:
     cfg = config_from_dict(
         {
             "scan": {"extensions": [".mp4"]},
-            "serialization": {"mappings": {"title": "{title}", "year": "{release_year}"}},
-            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "runs", "cover_art_enabled": False},
+            "write": {"ffmpeg_path": "ffmpeg", "backup_dir": "logs", "cover_art_enabled": False},
         }
     )
 
@@ -169,4 +165,5 @@ def test_inspect_normalizes_itunes_year(tmp_path: Path, monkeypatch) -> None:
     )
 
     contents = log_path.read_text(encoding="utf-8")
-    assert "[OK]" in contents
+    assert "[MISSING]" in contents
+    assert "year" not in contents

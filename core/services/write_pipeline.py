@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Union
 
 
 def has_sufficient_backup_space(path: Path, required_bytes: int) -> bool:
@@ -14,11 +14,11 @@ def has_sufficient_backup_space(path: Path, required_bytes: int) -> bool:
 
 
 def filter_existing_tags(
-    tags_to_write: Dict[str, str],
+    tags_to_write: Dict[str, Union[str, List[str]]],
     existing_tags: Dict[str, str],
-) -> tuple[Dict[str, str], list[str]]:
+) -> tuple[Dict[str, Union[str, List[str]]], list[str]]:
     """Drop tags that already exist and return skipped keys."""
-    filtered: Dict[str, str] = {}
+    filtered: Dict[str, Union[str, List[str]]] = {}
     skipped: list[str] = []
     for key, value in tags_to_write.items():
         existing_value = existing_tags.get(str(key).lower())

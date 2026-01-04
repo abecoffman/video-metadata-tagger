@@ -1,2 +1,5 @@
 runs/
 .pytest_cache/
+.venv/
+venv/
+logs/

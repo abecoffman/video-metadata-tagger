@@ -7,17 +7,17 @@ def test_cleanup_run_dirs_removes_previous_runs(tmp_path: Path) -> None:
     (tmp_path / "20250101-010101").mkdir()
     (tmp_path / "20250102-020202").mkdir()
 
-    cleanup_run_dirs(tmp_path)
+    cleanup_run_dirs(tmp_path, max_logs=1)
 
-    assert list(tmp_path.iterdir()) == []
+    assert len(list(tmp_path.iterdir())) == 1
 
 
 def test_setup_run_dirs_cleans_then_creates(tmp_path: Path) -> None:
     (tmp_path / "20250101-010101").mkdir()
 
-    run_dirs = setup_run_dirs(None, tmp_path, test_mode=False)
+    run_dirs = setup_run_dirs(None, tmp_path, test_mode=False, max_logs=20)
 
     assert run_dirs is not None
     assert run_dirs.run_backup_dir is not None
     assert run_dirs.run_backup_dir.exists()
-    assert not (tmp_path / "20250101-010101").exists()
+    assert (tmp_path / "20250101-010101").exists()

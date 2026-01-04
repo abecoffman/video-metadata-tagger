@@ -4,7 +4,8 @@ from pathlib import Path
 
 import main
 from core import run
-from tmdb import client as tmdb_client
+from core.providers.tmdb import adapter as tmdb_adapter
+from core.providers.tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path, extensions=None) -> None:
@@ -18,7 +19,6 @@ def _write_config(path: Path, backup_dir: Path, extensions=None) -> None:
             "backup_original": True,
             "backup_dir": str(backup_dir),
         },
-        "serialization": {"mappings": {"title": "{title}"}, "max_overview_length": 500},
     }
     path.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -42,6 +42,7 @@ def _mock_tmdb(monkeypatch) -> None:
         "tmdb_configuration",
         lambda *args, **kwargs: {"images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}},
     )
+    monkeypatch.setattr(tmdb_adapter, "tmdb_request", lambda *args, **kwargs: {})
     monkeypatch.setattr(run.time, "sleep", lambda *_args, **_kwargs: None)
 
 
@@ -50,7 +51,7 @@ def test_cli_root_processes_files(capsys, tmp_path: Path, monkeypatch) -> None:
     root.mkdir()
     (root / "Top Gun (1986).m4v").write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
+    _write_config(cfg_path, tmp_path / "logs")
     _mock_tmdb(monkeypatch)
     monkeypatch.setenv("TMDB_API_KEY", "x")
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--root", str(root)])
@@ -67,7 +68,7 @@ def test_cli_file_requires_configured_extension(capsys, tmp_path: Path, monkeypa
     movie = tmp_path / "Top Gun (1986).mp4"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs", extensions=[".m4v"])
+    _write_config(cfg_path, tmp_path / "logs", extensions=[".m4v"])
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie)])
 
     exit_code = main.main()
@@ -79,7 +80,7 @@ def test_cli_file_requires_configured_extension(capsys, tmp_path: Path, monkeypa
 
 def test_cli_file_missing(capsys, tmp_path: Path, monkeypatch) -> None:
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
+    _write_config(cfg_path, tmp_path / "logs")
     missing = tmp_path / "missing.m4v"
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(missing)])
 
@@ -122,8 +123,8 @@ def test_cli_restore_backup_uses_backup_dir(capsys, tmp_path: Path, monkeypatch)
     movie = tmp_path / "Top Gun (1986).m4v"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
-    backup_dir = tmp_path / "runs" / "run"
+    _write_config(cfg_path, tmp_path / "logs")
+    backup_dir = tmp_path / "logs" / "run"
     backup_dir.mkdir(parents=True)
     restored = {"called": False}
 
@@ -146,8 +147,8 @@ def test_cli_restore_backup_missing(capsys, tmp_path: Path, monkeypatch) -> None
     movie = tmp_path / "Top Gun (1986).m4v"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
-    missing_backup = tmp_path / "runs" / "missing"
+    _write_config(cfg_path, tmp_path / "logs")
+    missing_backup = tmp_path / "logs" / "missing"
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie), "--restore-backup", str(missing_backup)])
 
     exit_code = main.main()
@@ -163,7 +164,7 @@ def test_cli_only_ext_filters_files(capsys, tmp_path: Path, monkeypatch) -> None
     (root / "movie.m4v").write_text("data", encoding="utf-8")
     (root / "movie.mp4").write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs", extensions=[".m4v", ".mp4"])
+    _write_config(cfg_path, tmp_path / "logs", extensions=[".m4v", ".mp4"])
     _mock_tmdb(monkeypatch)
     monkeypatch.setenv("TMDB_API_KEY", "x")
     monkeypatch.setattr(
@@ -184,7 +185,7 @@ def test_cli_falls_back_to_tv_search(capsys, tmp_path: Path, monkeypatch) -> Non
     root.mkdir()
     (root / "Amelie.m4v").write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
+    _write_config(cfg_path, tmp_path / "logs")
     monkeypatch.setattr(run, "tmdb_search_best_match_with_candidates_scored", lambda **kwargs: None)
     monkeypatch.setattr(
         run,

@@ -4,7 +4,8 @@ from pathlib import Path
 
 import main
 from core import run
-from tmdb import client as tmdb_client
+from core.providers.tmdb import adapter as tmdb_adapter
+from core.providers.tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path) -> None:
@@ -18,7 +19,6 @@ def _write_config(path: Path, backup_dir: Path) -> None:
             "backup_original": True,
             "backup_dir": str(backup_dir),
         },
-        "serialization": {"mappings": {"title": "{title}"}, "max_overview_length": 500},
     }
     path.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -37,6 +37,7 @@ def _mock_tmdb(monkeypatch) -> None:
         "tmdb_movie_details",
         lambda *args, **kwargs: {"id": 1, "title": "Top Gun", "release_date": "1986-05-16"},
     )
+    monkeypatch.setattr(tmdb_adapter, "tmdb_request", lambda *args, **kwargs: {})
     monkeypatch.setattr(run.time, "sleep", lambda *_args, **_kwargs: None)
 
 
@@ -47,11 +48,11 @@ def test_rerun_failed_filters_manifest(capsys, tmp_path: Path, monkeypatch) -> N
     movie_fail.write_text("data", encoding="utf-8")
 
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs")
+    _write_config(cfg_path, tmp_path / "logs")
     _mock_tmdb(monkeypatch)
     monkeypatch.setenv("TMDB_API_KEY", "x")
 
-    manifest = tmp_path / "run.jsonl"
+    manifest = tmp_path / "manifest.jsonl"
     manifest.write_text(
         "\n".join(
             [

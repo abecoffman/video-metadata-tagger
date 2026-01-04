@@ -1,0 +1,171 @@
+{
+  "version": "1.0.0",
+  "targets": {
+    "ffmpeg": { "enabled": true, "path": "ffmpeg", "movflags_use_metadata_tags": true },
+    "mp4tags": { "enabled": true, "path": "mp4tags" }
+  },
+  "rules": [
+    {
+      "itunes_key": "title",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}", "jsonpath": "$.title" }],
+      "notes": "Primary display title (iTunes Name)."
+    },
+    {
+      "itunes_key": "year",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}", "jsonpath": "$.release_date" }],
+      "transform": "year_from_date",
+      "notes": "FFmpeg uses 'year' key for the iTunes Year atom. Prefer YYYY."
+    },
+    {
+      "itunes_key": "date",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}", "jsonpath": "$.release_date" }],
+      "transform": "year_from_date",
+      "notes": "Standard MP4 date tag (YYYY)."
+    },
+    {
+      "itunes_key": "description",
+      "writer": "mp4tags",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}", "jsonpath": "$.overview" }
+      ],
+      "transform": "first_nonempty_then_truncate",
+      "params": { "max_chars": 2000 },
+      "notes": "Full description (iTunes description)."
+    },
+    {
+      "itunes_key": "shortdesc",
+      "writer": "mp4tags",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}", "jsonpath": "$.tagline" },
+        { "endpoint": "/movie/{id}", "jsonpath": "$.overview" }
+      ],
+      "transform": "first_nonempty_then_truncate",
+      "params": { "max_chars": 255 },
+      "notes": "Short description: use tagline if present, otherwise first ~255 chars of overview."
+    },
+    {
+      "itunes_key": "comment",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}", "jsonpath": "$.tagline" },
+        { "endpoint": "/movie/{id}", "jsonpath": "$.imdb_id" },
+        { "endpoint": "/movie/{id}", "jsonpath": "$.id" }
+      ],
+      "transform": "compose_comment",
+      "notes": "Tagline + IDs. Example: 'Tagline … | TMDb:123 | IMDb:tt…'"
+    },
+    {
+      "itunes_key": "genre",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}", "jsonpath": "$.genres[*].name" }],
+      "transform": "tmdb_genres_to_apple_genres",
+      "params": { "max_genres": 2 },
+      "notes": "Write multiple Apple-canonical genres via repeated atoms."
+    },
+    {
+      "itunes_key": "keywords",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}/keywords", "jsonpath": "$.keywords[*].name" }],
+      "transform": "limit_list",
+      "params": { "max_items": 20 }
+    },
+    {
+      "itunes_key": "cast",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}/credits", "jsonpath": "$.cast" }
+      ],
+      "transform": "pick_cast_names_by_order",
+      "params": { "max_items": 8 },
+      "notes": "Top-billed cast by billing order for iTunMOVI."
+    },
+    {
+      "itunes_key": "director",
+      "writer": "either",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}/credits", "jsonpath": "$.crew" }
+      ],
+      "transform": "pick_crew_names_by_job",
+      "params": { "job": "Director", "max_items": 5 },
+      "notes": "⚠️ Warn if no Director found in credits."
+    },
+    {
+      "itunes_key": "producer",
+      "writer": "either",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}/credits", "jsonpath": "$.crew" }
+      ],
+      "transform": "pick_crew_names_by_job",
+      "params": { "job": "Producer", "max_items": 5 }
+    },
+    {
+      "itunes_key": "screenwriter",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}/credits", "jsonpath": "$.crew" }
+      ],
+      "transform": "pick_crew_names_by_jobs",
+      "params": { "jobs": ["Screenplay", "Writer"], "max_items": 5 },
+      "notes": "Uses Screenplay first, then Writer as fallback."
+    },
+    {
+      "itunes_key": "composer",
+      "writer": "either",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}/credits", "jsonpath": "$.crew" }
+      ],
+      "transform": "pick_crew_names_by_job",
+      "params": { "job": "Original Music Composer", "max_items": 5 }
+    },
+    {
+      "itunes_key": "studio",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}", "jsonpath": "$.production_companies[*].name" }],
+      "transform": "first"
+    },
+    {
+      "itunes_key": "grouping",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}", "jsonpath": "$.belongs_to_collection.name" },
+        { "endpoint": "/movie/{id}", "jsonpath": "$.original_language" }
+      ],
+      "transform": "compose_grouping",
+      "notes": "Example: 'Collection Name | lang=fr'."
+    },
+    {
+      "itunes_key": "copyright",
+      "writer": "ffmpeg",
+      "tmdb_sources": [
+        { "endpoint": "/movie/{id}", "jsonpath": "$.production_companies[*].name" },
+        { "endpoint": "/movie/{id}", "jsonpath": "$.release_date" }
+      ],
+      "transform": "compose_copyright",
+      "notes": "Optional; keep conservative."
+    },
+    {
+      "itunes_key": "media_type",
+      "writer": "mp4tags",
+      "tmdb_sources": [],
+      "fallback": "Movie",
+      "notes": "Set iTunes 'stik' atom to Movie."
+    },
+    {
+      "itunes_key": "hd_video",
+      "writer": "ffmpeg",
+      "tmdb_sources": [],
+      "transform": "infer_hd_from_probe",
+      "notes": "If you probe width>=1280 set hd_video=1 else 0."
+    },
+    {
+      "itunes_key": "artwork",
+      "writer": "ffmpeg",
+      "tmdb_sources": [{ "endpoint": "/movie/{id}/images", "jsonpath": "$.posters[0].file_path" }],
+      "transform": "download_tmdb_image_to_file",
+      "notes": "Embed poster as cover art (covr)."
+    }
+  ]
+}

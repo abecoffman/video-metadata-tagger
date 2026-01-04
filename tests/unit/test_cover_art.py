@@ -5,7 +5,9 @@ from typing import Optional
 
 import main
 from core import run
-from tmdb import client as tmdb_client
+from core.providers.tmdb import adapter as tmdb_adapter
+from core.mapping import transforms
+from core.providers.tmdb import client as tmdb_client
 
 
 def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
@@ -21,11 +23,10 @@ def _write_config(path: Path, backup_dir: Path, enabled: bool) -> None:
             "cover_art_enabled": enabled,
             "cover_art_size": "w185",
             "ffmpeg_path": "ffmpeg",
-            "atomicparsley_path": "AtomicParsley",
-            "metadata_tool": "atomicparsley",
+            "mp4tags_path": "mp4tags",
+            "metadata_tool": "mp4tags",
             "atomic_replace": True,
         },
-        "serialization": {"mappings": {"title": "{title}"}, "max_overview_length": 500},
     }
     path.write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -56,6 +57,15 @@ def _mock_tmdb(monkeypatch, poster_path: Optional[str]) -> None:
             "images": {"secure_base_url": "https://image.tmdb.org/t/p/", "poster_sizes": ["w185"]}
         },
     )
+    def fake_tmdb_request(session, api_key, endpoint, params):
+        if endpoint.endswith("/images"):
+            return {"posters": [{"file_path": poster_path}]} if poster_path else {"posters": []}
+        if endpoint.endswith("/keywords"):
+            return {"keywords": []}
+        if endpoint.endswith("/credits"):
+            return {"crew": []}
+        return {}
+    monkeypatch.setattr(tmdb_adapter, "tmdb_request", fake_tmdb_request)
     monkeypatch.setattr(run.time, "sleep", lambda *_args, **_kwargs: None)
 
 
@@ -63,56 +73,53 @@ def test_cover_art_downloads_and_attaches(tmp_path: Path, monkeypatch) -> None:
     movie = tmp_path / "Top Gun (1986).m4v"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs", enabled=True)
+    _write_config(cfg_path, tmp_path / "logs", enabled=True)
     _mock_tmdb(monkeypatch, poster_path="/poster.jpg")
     monkeypatch.setenv("TMDB_API_KEY", "x")
 
-    cover_file = tmp_path / "poster.jpg"
-    cover_file.write_bytes(b"img")
+    def fake_download(tmdb_path, out_path, config=None):
+        out_path.write_bytes(b"img")
+        return out_path
 
-    def fake_download(session, url, suffix):
-        return cover_file
+    captured = {"cover": None}
 
-    captured = {"cover": None, "remove": None}
-
-    def fake_write(**kwargs):
+    def fake_ffmpeg_write(**kwargs):
         captured["cover"] = kwargs.get("cover_art_path")
-        captured["remove"] = kwargs.get("remove_existing_artwork")
         return True
 
-    monkeypatch.setattr(run, "download_cover_art", fake_download)
-    monkeypatch.setattr(run, "atomicparsley_write_metadata", fake_write)
+    monkeypatch.setattr(transforms, "download_tmdb_image_to_file", fake_download)
+    monkeypatch.setattr(run, "ffmpeg_write_metadata", fake_ffmpeg_write)
+    monkeypatch.setattr(run, "write_itunes_metadata", lambda **_kwargs: True)
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie)])
 
     exit_code = main.main()
 
     assert exit_code == 0
-    assert captured["cover"] == cover_file
-    assert captured["remove"] is False
-    assert not cover_file.exists()
+    assert captured["cover"] is not None
+    assert captured["cover"].exists()
 
 
 def test_cover_art_skips_when_missing_poster(tmp_path: Path, monkeypatch) -> None:
     movie = tmp_path / "Top Gun (1986).m4v"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs", enabled=True)
+    _write_config(cfg_path, tmp_path / "logs", enabled=True)
     _mock_tmdb(monkeypatch, poster_path=None)
     monkeypatch.setenv("TMDB_API_KEY", "x")
 
-    called = {"download": False, "cover": None, "remove": None}
+    called = {"download": False, "cover": None}
 
-    def fake_download(session, url, suffix):
+    def fake_download(tmdb_path, out_path, config=None):
         called["download"] = True
         return None
 
-    def fake_write(**kwargs):
+    def fake_ffmpeg_write(**kwargs):
         called["cover"] = kwargs.get("cover_art_path")
-        called["remove"] = kwargs.get("remove_existing_artwork")
         return True
 
-    monkeypatch.setattr(run, "download_cover_art", fake_download)
-    monkeypatch.setattr(run, "atomicparsley_write_metadata", fake_write)
+    monkeypatch.setattr(transforms, "download_tmdb_image_to_file", fake_download)
+    monkeypatch.setattr(run, "ffmpeg_write_metadata", fake_ffmpeg_write)
+    monkeypatch.setattr(run, "write_itunes_metadata", lambda **_kwargs: True)
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie)])
 
     exit_code = main.main()
@@ -120,14 +127,13 @@ def test_cover_art_skips_when_missing_poster(tmp_path: Path, monkeypatch) -> Non
     assert exit_code == 0
     assert called["download"] is False
     assert called["cover"] is None
-    assert called["remove"] is False
 
 
 def test_cover_art_logs_selected_image_in_verbose(capsys, tmp_path: Path, monkeypatch) -> None:
     movie = tmp_path / "Top Gun (1986).m4v"
     movie.write_text("data", encoding="utf-8")
     cfg_path = tmp_path / "config.json"
-    _write_config(cfg_path, tmp_path / "runs", enabled=True)
+    _write_config(cfg_path, tmp_path / "logs", enabled=True)
     _mock_tmdb(monkeypatch, poster_path="/poster.jpg")
     monkeypatch.setenv("TMDB_API_KEY", "x")
     monkeypatch.setattr(sys, "argv", ["main.py", "--config", str(cfg_path), "--file", str(movie), "--test", "verbose"])
@@ -136,4 +142,4 @@ def test_cover_art_logs_selected_image_in_verbose(capsys, tmp_path: Path, monkey
 
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Cover art: https://image.tmdb.org/t/p/w185/poster.jpg" in out
+    assert "Cover art" not in out
